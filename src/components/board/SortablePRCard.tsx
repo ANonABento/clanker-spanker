@@ -16,6 +16,8 @@ interface SortablePRCardProps {
 }
 
 export function SortablePRCard(props: SortablePRCardProps) {
+  // Destructure onOpenInGitHub so it's not passed to PRCard (we handle clicks here)
+  const { onOpenInGitHub, ...prCardProps } = props;
   const wasDragging = useRef(false);
 
   const {
@@ -37,28 +39,17 @@ export function SortablePRCard(props: SortablePRCardProps) {
   }, [isDragging]);
 
   const handleClick = (e: React.MouseEvent) => {
-    console.log("[SortablePRCard] handleClick called", {
-      wasDragging: wasDragging.current,
-      target: (e.target as HTMLElement).tagName,
-      closestButton: !!(e.target as HTMLElement).closest("button"),
-      hasOnOpenInGitHub: !!props.onOpenInGitHub,
-      prUrl: props.pr.url,
-    });
-
     // Don't open if we were dragging
     if (wasDragging.current) {
-      console.log("[SortablePRCard] Blocked: was dragging");
       wasDragging.current = false;
       return;
     }
     // Don't open if clicking a button
     if ((e.target as HTMLElement).closest("button")) {
-      console.log("[SortablePRCard] Blocked: clicked button");
       return;
     }
     e.stopPropagation();
-    console.log("[SortablePRCard] Calling onOpenInGitHub");
-    props.onOpenInGitHub?.(props.pr);
+    onOpenInGitHub?.(props.pr);
   };
 
   const style: React.CSSProperties = {
@@ -82,7 +73,7 @@ export function SortablePRCard(props: SortablePRCardProps) {
       {...listeners}
       onClick={handleClick}
     >
-      <PRCard {...props} />
+      <PRCard {...prCardProps} />
     </div>
   );
 }
