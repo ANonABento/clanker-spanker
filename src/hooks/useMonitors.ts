@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getMonitors,
   startMonitor as startMonitorAPI,
   stopMonitor as stopMonitorAPI,
-  fetchPRComments,
   type StartMonitorParams,
 } from "@/lib/tauri";
 import type { Monitor, PR } from "@/lib/types";
@@ -43,16 +42,19 @@ export function useMonitors(options: UseMonitorsOptions = {}): UseMonitorsReturn
     return map;
   }, [monitors]);
 
+  // Keep a ref to the map for stable getMonitorForPR function
+  // This prevents unnecessary re-renders in consumers
+  const monitorsMapRef = useRef(monitorsMap);
+  monitorsMapRef.current = monitorsMap;
+
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      // Fetch only active monitors
-      const data = await getMonitors({ status: "running" });
-      // Also fetch sleeping monitors
-      const sleepingData = await getMonitors({ status: "sleeping" });
-      setMonitors([...data, ...sleepingData]);
+      // Fetch all active monitors (running + sleeping) in one call
+      const data = await getMonitors({ status: "active" });
+      setMonitors(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -84,10 +86,7 @@ export function useMonitors(options: UseMonitorsOptions = {}): UseMonitorsReturn
       };
 
       try {
-        // Fetch unresolved comments before starting monitor
-        // This populates the pr_comments table and updates unresolved_threads count
-        await fetchPRComments(pr.number, pr.repo);
-
+        // Monitor bash script handles fetching unresolved comments via GraphQL
         const monitor = await startMonitorAPI(params);
         // Refresh monitors list
         await refresh();
@@ -122,11 +121,13 @@ export function useMonitors(options: UseMonitorsOptions = {}): UseMonitorsReturn
     [monitorsMap, refresh]
   );
 
+  // Stable function that uses ref - doesn't cause re-renders when monitors change
+  // Consumers get the latest data but the function identity stays the same
   const getMonitorForPR = useCallback(
     (prId: string): Monitor | undefined => {
-      return monitorsMap.get(prId);
+      return monitorsMapRef.current.get(prId);
     },
-    [monitorsMap]
+    [] // No dependencies - uses ref for latest data
   );
 
   return {

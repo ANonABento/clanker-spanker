@@ -11,11 +11,9 @@ import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { PRCardSkeleton } from "./PRCardSkeleton";
 import { SortablePRCard } from "./SortablePRCard";
 import type { PR, Monitor } from "@/lib/types";
-import type { ReactNode } from "react";
 
 interface CardGridProps {
   prs: PR[];
-  doneChips?: ReactNode;
   isLoading?: boolean;
   focusedPRId?: string | null;
   hasRepo?: boolean;
@@ -26,6 +24,8 @@ interface CardGridProps {
   onStopMonitor?: (pr: PR) => void;
   onOpenInGitHub?: (pr: PR) => void;
   onExpand?: (pr: PR) => void;
+  onDismiss?: (pr: PR) => void;
+  completedMonitors?: Record<string, { monitorId: string; prNumber: number; iteration: number; maxIterations: number; exitReason: string }>;
 }
 
 function LoadingSkeletons() {
@@ -43,7 +43,6 @@ function LoadingSkeletons() {
 
 export function CardGrid({
   prs,
-  doneChips,
   isLoading,
   focusedPRId,
   hasRepo,
@@ -54,6 +53,8 @@ export function CardGrid({
   onStopMonitor,
   onOpenInGitHub,
   onExpand,
+  onDismiss,
+  completedMonitors = {},
 }: CardGridProps) {
   // Configure sensors with activation constraints to allow clicking
   const sensors = useSensors(
@@ -92,12 +93,7 @@ export function CardGrid({
   const isEmpty = !isLoading && prs.length === 0;
 
   return (
-    <div className="h-full overflow-y-auto">
-      {/* Done Chips Row */}
-      {doneChips && (
-        <div className="flex flex-wrap gap-2 mb-4">{doneChips}</div>
-      )}
-
+    <div className="h-full overflow-y-auto pt-1">
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           <LoadingSkeletons />
@@ -126,6 +122,9 @@ export function CardGrid({
                   onStopMonitor={onStopMonitor}
                   onOpenInGitHub={onOpenInGitHub}
                   onExpand={onExpand}
+                  onDismiss={onDismiss}
+                  hasCompletedMonitor={!!completedMonitors[pr.id]}
+                  completedMonitorData={completedMonitors[pr.id]}
                 />
               ))}
             </div>

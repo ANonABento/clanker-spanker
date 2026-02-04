@@ -170,6 +170,11 @@ pub fn get_setting(conn: &Connection, key: &str) -> SqliteResult<Option<String>>
     }
 }
 
+/// Get a setting value with simpler return type (for internal use)
+pub fn get_setting_value(conn: &Connection, key: &str) -> Option<String> {
+    get_setting(conn, key).ok().flatten()
+}
+
 /// Set a setting value
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> SqliteResult<()> {
     conn.execute(
@@ -236,6 +241,53 @@ pub fn delete_stale_prs(conn: &Connection, repo: &str, active_pr_ids: &[String])
 
     let deleted = conn.execute(&sql, rusqlite::params_from_iter(params))?;
     Ok(deleted)
+}
+
+/// Get stale PR IDs (PRs in cache that are not in the active list)
+pub fn get_stale_pr_ids(conn: &Connection, repo: &str, active_pr_ids: &[String]) -> SqliteResult<Vec<(String, i32)>> {
+    if active_pr_ids.is_empty() {
+        // If no active PRs, all cached PRs for this repo are stale
+        let mut stmt = conn.prepare("SELECT id, number FROM pr_cache WHERE repo = ?1 AND state = 'open'")?;
+        let rows = stmt.query_map([repo], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+        })?;
+        return rows.collect();
+    }
+
+    // Build placeholders for NOT IN clause
+    let placeholders: Vec<String> = (0..active_pr_ids.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect();
+    let placeholders_str = placeholders.join(",");
+
+    let sql = format!(
+        "SELECT id, number FROM pr_cache WHERE repo = ?1 AND state = 'open' AND id NOT IN ({})",
+        placeholders_str
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+
+    let mut param_values: Vec<String> = vec![repo.to_string()];
+    param_values.extend(active_pr_ids.iter().cloned());
+
+    let rows = stmt.query_map(rusqlite::params_from_iter(param_values), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+    })?;
+
+    rows.collect()
+}
+
+/// Update a PR's state and category in the cache
+pub fn update_pr_state(conn: &Connection, pr_id: &str, state: &str, category: &str) -> SqliteResult<usize> {
+    conn.execute(
+        "UPDATE pr_cache SET state = ?1, column_assignment = ?2 WHERE id = ?3",
+        [state, category, pr_id],
+    )
+}
+
+/// Dismiss a PR (remove from cache)
+pub fn dismiss_pr(conn: &Connection, pr_id: &str) -> SqliteResult<usize> {
+    conn.execute("DELETE FROM pr_cache WHERE id = ?1", [pr_id])
 }
 
 #[cfg(test)]

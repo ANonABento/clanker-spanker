@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { X, Sun, Moon, Power, Keyboard } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Sun, Moon, Power, Keyboard, Zap } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
 import type { Theme } from "@/lib/theme";
@@ -18,6 +19,35 @@ export function SettingsDialog({
   onThemeChange,
 }: SettingsDialogProps) {
   const { isAutoStartEnabled, isLoading: isAutoStartLoading, toggleAutoStart } = useAutostart();
+  const [sleepPreventionEnabled, setSleepPreventionEnabled] = useState(false);
+  const [sleepPreventionLoading, setSleepPreventionLoading] = useState(false);
+
+  // Load sleep prevention setting
+  useEffect(() => {
+    if (!isOpen) return;
+    invoke<string | null>("get_setting", { key: "sleep_prevention_enabled" })
+      .then((value) => setSleepPreventionEnabled(value === "true"))
+      .catch(console.error);
+  }, [isOpen]);
+
+  const toggleSleepPrevention = async () => {
+    setSleepPreventionLoading(true);
+    try {
+      const newValue = !sleepPreventionEnabled;
+      await invoke("set_setting", {
+        key: "sleep_prevention_enabled",
+        value: newValue ? "true" : "false",
+      });
+      setSleepPreventionEnabled(newValue);
+      // Sync sleep state with current monitors
+      await invoke("sync_sleep_prevention");
+    } catch (error) {
+      console.error("Failed to toggle sleep prevention:", error);
+    } finally {
+      setSleepPreventionLoading(false);
+    }
+  };
+
   // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
@@ -107,6 +137,32 @@ export function SettingsDialog({
                 disabled={isAutoStartLoading}
               >
                 {isAutoStartEnabled ? "Enabled" : "Disabled"}
+              </Button>
+            </div>
+          </section>
+
+          {/* Power Management Section */}
+          <section>
+            <h3 className="text-sm font-medium text-text-primary mb-3">
+              Power
+            </h3>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
+              <div className="flex items-center gap-3">
+                <Zap className="h-4 w-4 text-text-secondary" />
+                <div>
+                  <p className="text-sm text-text-primary">Prevent sleep while monitoring</p>
+                  <p className="text-xs text-text-tertiary">
+                    Keep your computer awake when monitors are active
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant={sleepPreventionEnabled ? "default" : "outline"}
+                size="sm"
+                onClick={toggleSleepPrevention}
+                disabled={sleepPreventionLoading}
+              >
+                {sleepPreventionEnabled ? "Enabled" : "Disabled"}
               </Button>
             </div>
           </section>

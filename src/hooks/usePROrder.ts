@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { PR } from "@/lib/types";
 
 const STORAGE_KEY = "pr-card-order";
@@ -13,9 +13,19 @@ export function usePROrder() {
     }
   });
 
+  // Create a Map for O(1) index lookups instead of O(n) indexOf calls
+  const orderMap = useMemo(
+    () => new Map(order.map((id, index) => [id, index])),
+    [order]
+  );
+
   // Persist order to localStorage
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
+    } catch (e) {
+      console.error("Failed to save PR order:", e);
+    }
   }, [order]);
 
   const reorder = useCallback((activeId: string, overId: string) => {
@@ -46,27 +56,29 @@ export function usePROrder() {
   }, []);
 
   // Sort PRs by stored order, new PRs go to end
+  // Uses Map for O(1) lookups instead of O(n) indexOf calls
   const sortPRs = useCallback(
     (prs: PR[]) => {
       return [...prs].sort((a, b) => {
-        const aIdx = order.indexOf(a.id);
-        const bIdx = order.indexOf(b.id);
-        if (aIdx === -1 && bIdx === -1) return 0;
-        if (aIdx === -1) return 1;
-        if (bIdx === -1) return -1;
+        const aIdx = orderMap.get(a.id);
+        const bIdx = orderMap.get(b.id);
+        if (aIdx === undefined && bIdx === undefined) return 0;
+        if (aIdx === undefined) return 1;
+        if (bIdx === undefined) return -1;
         return aIdx - bIdx;
       });
     },
-    [order]
+    [orderMap]
   );
 
   // Add any new PRs to the order (that aren't already tracked)
+  // Uses Map for O(1) lookups instead of O(n) includes calls
   const ensureInOrder = useCallback((prs: PR[]) => {
-    const newIds = prs.map((pr) => pr.id).filter((id) => !order.includes(id));
+    const newIds = prs.map((pr) => pr.id).filter((id) => !orderMap.has(id));
     if (newIds.length > 0) {
       setOrder((prev) => [...prev, ...newIds]);
     }
-  }, [order]);
+  }, [orderMap]);
 
   return { order, reorder, sortPRs, ensureInOrder };
 }

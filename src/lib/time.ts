@@ -159,3 +159,40 @@ export function formatInterval(minutes: number): string {
 
   return `${hours}h ${remainingMinutes}m`;
 }
+
+/**
+ * Format a Date object as relative time (e.g., "2 minutes ago", "just now")
+ */
+export function formatRelativeTimeFromDate(date: Date | null | undefined): string {
+  if (!date) return "";
+
+  try {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const absDiff = Math.abs(diffMs);
+    const isPast = diffMs > 0;
+
+    // Less than a minute
+    if (absDiff < MINUTE) {
+      return "just now";
+    }
+
+    // Use Intl.RelativeTimeFormat for localized formatting
+    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+    if (absDiff < HOUR) {
+      const minutes = Math.floor(absDiff / MINUTE);
+      return rtf.format(isPast ? -minutes : minutes, "minute");
+    }
+
+    if (absDiff < DAY) {
+      const hours = Math.floor(absDiff / HOUR);
+      return rtf.format(isPast ? -hours : hours, "hour");
+    }
+
+    const days = Math.floor(absDiff / DAY);
+    return rtf.format(isPast ? -days : days, "day");
+  } catch {
+    return "";
+  }
+}

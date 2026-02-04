@@ -4,8 +4,9 @@ export type ReviewStatus =
   | "pending"
   | "approved"
   | "changes_requested"
-  | "commented";
-export type Column = "todo" | "monitoring" | "done";
+  | "commented"
+  | "conflicts";
+export type Category = "todo" | "monitoring" | "done";
 export type MonitorStatus =
   | "running"
   | "sleeping"
@@ -44,8 +45,8 @@ export interface PR {
   createdAt: string;
   updatedAt: string;
 
-  // Board
-  column: Column;
+  // Categorization
+  category: Category;
 }
 
 export interface PRComment {

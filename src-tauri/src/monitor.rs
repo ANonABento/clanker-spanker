@@ -1,5 +1,6 @@
-use crate::db::AppState;
+use crate::db::{self, AppState};
 use crate::dock;
+use crate::sleep_prevention;
 use crate::tray;
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::params;
@@ -32,7 +33,7 @@ pub fn get_active_monitor_count(state: &AppState) -> Result<i32, String> {
     Ok(count)
 }
 
-/// Emit monitor state changed event and update tray/dock
+/// Emit monitor state changed event and update tray/dock/sleep prevention
 fn emit_state_change<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) {
     if let Ok(count) = get_active_monitor_count(state) {
         // Update tray tooltip
@@ -40,6 +41,14 @@ fn emit_state_change<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppSt
 
         // Update dock badge (macOS only)
         dock::set_dock_badge(if count > 0 { Some(count) } else { None });
+
+        // Update sleep prevention based on setting
+        if let Ok(conn) = state.db.lock() {
+            let sleep_enabled = db::get_setting_value(&conn, "sleep_prevention_enabled")
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            sleep_prevention::update_sleep_state(count, sleep_enabled);
+        }
 
         // Emit event for frontend
         let _ = app.emit(
@@ -294,9 +303,16 @@ pub fn get_monitors(
     let mut params: Vec<String> = vec![];
 
     if let Some(s) = &status {
-        if s != "all" {
-            query.push_str(" AND status = ?");
-            params.push(s.clone());
+        match s.as_str() {
+            "all" => {} // No filter
+            "active" => {
+                // Running or sleeping monitors
+                query.push_str(" AND status IN ('running', 'sleeping')");
+            }
+            _ => {
+                query.push_str(" AND status = ?");
+                params.push(s.clone());
+            }
         }
     }
 
@@ -431,6 +447,82 @@ pub fn get_monitor_for_pr(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Database error: {}", e)),
     }
+}
+
+/// Get the most recent monitor for a PR (including completed/failed)
+#[tauri::command]
+pub fn get_recent_monitor_for_pr(
+    state: State<'_, AppState>,
+    pr_id: String,
+) -> Result<Option<Monitor>, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Failed to lock database: {}", e))?;
+
+    let result = conn.query_row(
+        r#"
+        SELECT id, pr_id, pr_number, repo, pid, status, iteration, max_iterations,
+               interval_minutes, started_at, last_check_at, next_check_at, ended_at,
+               comments_fixed, exit_reason, log_file
+        FROM monitors
+        WHERE pr_id = ?1
+        ORDER BY started_at DESC
+        LIMIT 1
+        "#,
+        [&pr_id],
+        |row| {
+            Ok(Monitor {
+                id: row.get(0)?,
+                pr_id: row.get(1)?,
+                pr_number: row.get(2)?,
+                repo: row.get(3)?,
+                pid: row.get(4)?,
+                status: row.get(5)?,
+                iteration: row.get(6)?,
+                max_iterations: row.get(7)?,
+                interval_minutes: row.get(8)?,
+                started_at: row.get(9)?,
+                last_check_at: row.get(10)?,
+                next_check_at: row.get(11)?,
+                ended_at: row.get(12)?,
+                comments_fixed: row.get(13)?,
+                exit_reason: row.get(14)?,
+                log_file: row.get(15)?,
+            })
+        },
+    );
+
+    match result {
+        Ok(monitor) => Ok(Some(monitor)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Database error: {}", e)),
+    }
+}
+
+/// Read the log file content for a monitor
+#[tauri::command]
+pub fn read_monitor_log(
+    state: State<'_, AppState>,
+    monitor_id: String,
+) -> Result<String, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Failed to lock database: {}", e))?;
+
+    // Get the log file path
+    let log_file: String = conn
+        .query_row(
+            "SELECT log_file FROM monitors WHERE id = ?1",
+            [&monitor_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Monitor not found: {}", e))?;
+
+    // Read the log file
+    std::fs::read_to_string(&log_file)
+        .map_err(|e| format!("Failed to read log file: {}", e))
 }
 
 /// Update monitor iteration (internal use)
@@ -588,8 +680,9 @@ pub fn fetch_pr_comments(
         .map_err(|e| format!("Failed to execute gh CLI: {}", e))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gh CLI error: {}", stderr));
+        // reviewThreads field may not be available in older gh CLI versions
+        // Return empty comments list instead of failing
+        return Ok(Vec::new());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -604,11 +697,8 @@ pub fn fetch_pr_comments(
         .lock()
         .map_err(|e| format!("Failed to lock database: {}", e))?;
 
-    // Clear old comments for this PR
-    conn.execute("DELETE FROM pr_comments WHERE pr_id = ?1", [&pr_id])
-        .map_err(|e| format!("Failed to clear old comments: {}", e))?;
-
     let mut comments: Vec<PRComment> = Vec::new();
+    let mut seen_ids: Vec<String> = Vec::new();
 
     for thread in response.review_threads {
         // Get the first comment in the thread (the main comment)
@@ -664,8 +754,26 @@ pub fn fetch_pr_comments(
             )
             .map_err(|e| format!("Failed to insert comment: {}", e))?;
 
+            seen_ids.push(comment.id.clone());
             comments.push(comment);
         }
+    }
+
+    // Delete stale comments that are no longer in GitHub (resolved/deleted threads)
+    if !seen_ids.is_empty() {
+        let placeholders: String = seen_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "DELETE FROM pr_comments WHERE pr_id = ?1 AND id NOT IN ({})",
+            placeholders
+        );
+        let mut params: Vec<&dyn rusqlite::ToSql> = vec![&pr_id as &dyn rusqlite::ToSql];
+        for id in &seen_ids {
+            params.push(id as &dyn rusqlite::ToSql);
+        }
+        conn.execute(&query, params.as_slice()).ok();
+    } else {
+        // No comments fetched - clear all for this PR
+        conn.execute("DELETE FROM pr_comments WHERE pr_id = ?1", [&pr_id]).ok();
     }
 
     // Update unresolved_threads count in pr_cache

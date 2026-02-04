@@ -4,7 +4,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Header } from "@/components/layout/Header";
 import { CardGrid } from "@/components/board/CardGrid";
 import { PRCard } from "@/components/board/PRCard";
-import { DoneChip } from "@/components/board/DoneChip";
 import { FullTerminal } from "@/components/terminal/FullTerminal";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { ToastContainer } from "@/components/ui/toast";
@@ -26,10 +25,10 @@ import type { PR } from "@/lib/types";
 function App() {
   const { repos, currentRepo, isLoading: isLoadingRepo } = useRepos();
   const { filters, setFilter, resetFilters, hasActiveFilters } = useFilters();
-  const { prs, isLoading: isLoadingPRs, error, refresh } = usePRs({
+  const { prs, isLoading: isLoadingPRs, error, refresh, lastRefreshTime } = usePRs({
     repo: currentRepo || undefined,
   });
-  const { startMonitor, stopMonitor, getMonitorForPR } = useMonitors();
+  const { monitors, startMonitor, stopMonitor, getMonitorForPR } = useMonitors();
   const { theme, setTheme } = useTheme();
   const { isOpen: isSettingsOpen, openSettings, closeSettings } = useSettings();
   const { toasts, showToast, dismissToast } = useToast();
@@ -39,43 +38,41 @@ function App() {
   const [showFilters, setShowFilters] = useState(false);
   const [expandedPRId, setExpandedPRId] = useState<string | null>(null);
   const [terminalOutputs, setTerminalOutputs] = useState<Record<string, string[]>>({});
+  // Track completed monitors: prId -> { monitorId, prNumber, iteration, maxIterations, exitReason }
+  const [completedMonitors, setCompletedMonitors] = useState<Record<string, { monitorId: string; prNumber: number; iteration: number; maxIterations: number; exitReason: string }>>({});
 
   // Collect available labels and authors for filter options
   const availableLabels = useMemo(() => collectLabels(prs), [prs]);
   const availableAuthors = useMemo(() => collectAuthors(prs), [prs]);
 
-  // Combine PR data with monitor state for column assignment and apply filters
+  // Combine PR data with monitor state for category assignment and apply filters
   const prsWithMonitorState = useMemo(() => {
-    // First, apply monitor state to determine column
-    const prsWithColumn = prs.map((pr) => {
+    // First, apply monitor state to determine category
+    const prsWithCategory = prs.map((pr) => {
       const monitor = getMonitorForPR(pr.id);
-      const column = monitor && ["running", "sleeping"].includes(monitor.status)
+      const category = monitor && ["running", "sleeping"].includes(monitor.status)
         ? "monitoring"
-        : pr.column;
-      return { ...pr, column } as PR;
+        : pr.category;
+      return { ...pr, category } as PR;
     });
 
     // Then apply filters
-    return filterPRs(prsWithColumn, filters);
-  }, [prs, getMonitorForPR, filters]);
+    return filterPRs(prsWithCategory, filters);
+  }, [prs, getMonitorForPR, monitors, filters]);
 
-  // Separate done PRs (not dismissed) and active PRs
-  const donePRs = useMemo(
-    () => prsWithMonitorState.filter((pr) => pr.column === "done" && !isDismissed(pr.id)),
-    [prsWithMonitorState, isDismissed]
-  );
-
+  // All PRs (not dismissed), sorted
   const activePRs = useMemo(
-    () => sortPRs(prsWithMonitorState.filter((pr) => pr.column !== "done")),
-    [prsWithMonitorState, sortPRs]
+    () => sortPRs(prsWithMonitorState.filter((pr) => !isDismissed(pr.id))),
+    [prsWithMonitorState, sortPRs, isDismissed]
   );
 
-  // Create flat list of PRs for keyboard navigation (monitoring -> todo)
+  // Create flat list of PRs for keyboard navigation (monitoring -> todo -> done)
   const allPRsFlat = useMemo(() => {
-    const monitoring = activePRs.filter((pr) => pr.column === "monitoring");
-    const todo = activePRs.filter((pr) => pr.column === "todo");
-    return [...monitoring, ...todo, ...donePRs];
-  }, [activePRs, donePRs]);
+    const monitoring = activePRs.filter((pr) => pr.category === "monitoring");
+    const todo = activePRs.filter((pr) => pr.category === "todo");
+    const done = activePRs.filter((pr) => pr.category === "done");
+    return [...monitoring, ...todo, ...done];
+  }, [activePRs]);
 
   const handleStartMonitor = useCallback(
     async (pr: PR) => {
@@ -120,8 +117,15 @@ function App() {
   }, []);
 
   const handleRepoChange = useCallback(() => {
-    setTimeout(refresh, 100);
+    // Repo change is user-initiated, show visual feedback
+    setTimeout(() => refresh({ forceRefresh: true, showVisualFeedback: true }), 100);
   }, [refresh]);
+
+  // Wrap refresh to show toast on completion (user-initiated, show visual feedback)
+  const handleRefresh = useCallback(async () => {
+    await refresh({ forceRefresh: true, showVisualFeedback: true });
+    showToast("PRs refreshed", "success");
+  }, [refresh, showToast]);
 
   // Handle toggling monitor for keyboard navigation
   const handleToggleMonitor = useCallback(
@@ -129,7 +133,7 @@ function App() {
       const monitor = getMonitorForPR(pr.id);
       if (monitor && ["running", "sleeping"].includes(monitor.status)) {
         await handleStopMonitor(pr);
-      } else if (pr.column === "todo") {
+      } else if (pr.category === "todo") {
         await handleStartMonitor(pr);
       }
     },
@@ -185,6 +189,12 @@ function App() {
       "monitor:output",
       (event) => {
         const { prId, line } = event.payload;
+
+        // Filter out internal status markers (@@...@@) - they're for machine parsing
+        if (line.match(/^@@[A-Z_]+:.+@@$/)) {
+          return;
+        }
+
         setTerminalOutputs((prev) => ({
           ...prev,
           [prId]: [...(prev[prId] || []), line].slice(-100), // Keep last 100 lines
@@ -197,6 +207,37 @@ function App() {
     };
   }, []);
 
+  // Listen for monitor completion events
+  useEffect(() => {
+    const unlisten = listen<{ monitorId: string; prId?: string; prNumber?: number; exitReason: string; status: string; iteration?: number; maxIterations?: number }>(
+      "monitor:completed",
+      (event) => {
+        const { monitorId, prId, prNumber, exitReason, iteration, maxIterations } = event.payload;
+
+        // Track completed monitor with progress data
+        if (prId && prNumber) {
+          setCompletedMonitors((prev) => ({
+            ...prev,
+            [prId]: { monitorId, prNumber, iteration: iteration ?? 0, maxIterations: maxIterations ?? 0, exitReason },
+          }));
+        }
+
+        // Show toast notification
+        const prLabel = prNumber ? `PR #${prNumber}` : "Monitor";
+        const message = exitReason === "pr_clean"
+          ? `${prLabel} is clean!`
+          : exitReason === "max_iterations"
+          ? `${prLabel}: Max iterations reached`
+          : `${prLabel} completed`;
+        showToast(message, exitReason === "pr_clean" ? "success" : "info");
+      }
+    );
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [showToast]);
+
   const isLoading = isLoadingRepo || isLoadingPRs;
 
   // Get expanded PR if any
@@ -207,7 +248,7 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-[#0a0a0a]">
       <Header
-        onRefresh={refresh}
+        onRefresh={handleRefresh}
         isLoading={isLoading}
         onRepoChange={handleRepoChange}
         onOpenSettings={openSettings}
@@ -220,6 +261,7 @@ function App() {
         availableLabels={availableLabels}
         availableAuthors={availableAuthors}
         availableRepos={repos}
+        lastRefreshTime={lastRefreshTime}
       />
 
       <SettingsDialog
@@ -264,19 +306,8 @@ function App() {
             onStopMonitor={handleStopMonitor}
             onOpenInGitHub={(pr) => openUrl(pr.url)}
             onExpand={handleExpand}
-            doneChips={
-              donePRs.length > 0
-                ? donePRs.map((pr) => (
-                    <DoneChip
-                      key={pr.id}
-                      pr={pr}
-                      isFocused={pr.id === focusedPRId}
-                      onDismiss={handleDismiss}
-                      onOpenInGitHub={(pr) => openUrl(pr.url)}
-                    />
-                  ))
-                : undefined
-            }
+            onDismiss={handleDismiss}
+            completedMonitors={completedMonitors}
           />
         )}
       </main>
@@ -397,7 +428,7 @@ function ErrorState({
         </h2>
         <p className="mt-1 text-sm text-[#505050]">{message}</p>
       </div>
-      <Button variant="secondary" onClick={onRetry}>
+      <Button variant="secondary" onClick={() => onRetry()}>
         Retry
       </Button>
     </div>
