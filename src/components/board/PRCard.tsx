@@ -41,11 +41,11 @@ export function PRCard({
         )}
         onClick={() => onExpand?.(pr)}
       >
-        <span className="font-semibold text-[#c0c0c0] text-sm">#{pr.number}</span>
+        <span className="font-semibold text-[#e5e5e5] text-sm">#{pr.number}</span>
         {isMonitoring && (
           <div className="flex-1 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
             <div
-              className="h-full bg-[#8b5cf6] transition-all"
+              className="h-full bg-[#8b5cf6] shadow-[0_0_8px_rgba(139,92,246,0.5)] transition-all duration-300"
               style={{
                 width: `${monitor.maxIterations > 0 ? (monitor.iteration / monitor.maxIterations) * 100 : 0}%`,
               }}
@@ -79,21 +79,23 @@ export function PRCard({
       data-focused={isFocused}
       onClick={handleCardClick}
       className={cn(
-        "rounded-lg border border-[#1f1f1f] bg-[#111] p-3 space-y-2",
-        "hover:border-[#2a2a2a] hover:bg-[#141414] transition-colors",
-        isFocused && "ring-1 ring-[#8b5cf6] ring-offset-1 ring-offset-[#0a0a0a]"
+        "rounded-lg border border-[#1f1f1f] bg-[#111] p-3 space-y-2.5",
+        "shadow-[0_1px_2px_rgba(0,0,0,0.2)]",
+        "hover:border-[#333] hover:bg-[#141414] hover:shadow-[0_4px_16px_rgba(139,92,246,0.1)] hover:translate-y-[-1px]",
+        "transition-all duration-200 ease-out",
+        isFocused && "ring-2 ring-[#8b5cf6]/50 ring-offset-2 ring-offset-[#0a0a0a]"
       )}
     >
       {/* Header Row: PR#, Date, Comments on left; Status on right */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs">
-          <span className="font-semibold text-[#c0c0c0] text-sm">#{pr.number}</span>
+          <span className="font-semibold text-[#e5e5e5] text-sm">#{pr.number}</span>
           {pr.isDraft && (
             <span className="text-yellow-400/80 bg-yellow-500/10 px-1.5 py-0.5 rounded font-medium">
               Draft
             </span>
           )}
-          {pr.updatedAt && <span className="text-[#505050]">{formatRelativeTime(pr.updatedAt)}</span>}
+          {pr.updatedAt && <span className="text-[#666666]">{formatRelativeTime(pr.updatedAt)}</span>}
           {pr.unresolvedThreads > 0 && (
             <span className="flex items-center gap-1 text-orange-400">
               <MessageSquare className="h-3 w-3" />
@@ -119,10 +121,10 @@ export function PRCard({
       {/* Monitor Progress (inline when monitoring) */}
       {isMonitoring && (
         <>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs pt-1 border-t border-[#1f1f1f]/50">
             <div className="flex-1 h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
               <div
-                className="h-full bg-[#8b5cf6] transition-all"
+                className="h-full bg-[#8b5cf6] shadow-[0_0_8px_rgba(139,92,246,0.5)] transition-all duration-300"
                 style={{
                   width: `${monitor.maxIterations > 0 ? (monitor.iteration / monitor.maxIterations) * 100 : 0}%`,
                 }}
@@ -194,17 +196,17 @@ function StatusBadge({
 }) {
   if (!status) return null;
 
-  const styles: Record<string, Record<string, { bg: string; text: string; label: string }>> = {
+  const styles: Record<string, Record<string, { bg: string; text: string; label: string; glow?: string; pulse?: boolean }>> = {
     ci: {
-      passing: { bg: "bg-emerald-500/20", text: "text-emerald-400", label: "CI Passing" },
-      failing: { bg: "bg-red-500/20", text: "text-red-400", label: "CI Failing" },
-      pending: { bg: "bg-yellow-500/20", text: "text-yellow-400", label: "CI Pending" },
+      passing: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "CI Passing", glow: "glow-emerald" },
+      failing: { bg: "bg-red-500/15", text: "text-red-400", label: "CI Failing", glow: "glow-red" },
+      pending: { bg: "bg-yellow-500/15", text: "text-yellow-400", label: "CI Pending", glow: "glow-yellow", pulse: true },
     },
     review: {
-      approved: { bg: "bg-emerald-500/20", text: "text-emerald-400", label: "Approved" },
-      changes_requested: { bg: "bg-orange-500/20", text: "text-orange-400", label: "Changes" },
-      commented: { bg: "bg-blue-500/20", text: "text-blue-400", label: "Commented" },
-      pending: { bg: "bg-gray-500/20", text: "text-gray-400", label: "Need Review" },
+      approved: { bg: "bg-emerald-500/15", text: "text-emerald-400", label: "Approved", glow: "glow-emerald" },
+      changes_requested: { bg: "bg-orange-500/15", text: "text-orange-400", label: "Changes", glow: "glow-orange" },
+      commented: { bg: "bg-blue-500/15", text: "text-blue-400", label: "Commented", glow: "glow-blue" },
+      pending: { bg: "bg-gray-500/15", text: "text-gray-400", label: "Need Review" },
     },
   };
 
@@ -216,7 +218,9 @@ function StatusBadge({
       className={cn(
         "text-xs px-1.5 py-0.5 rounded font-medium",
         style.bg,
-        style.text
+        style.text,
+        style.glow,
+        style.pulse && "animate-pulse"
       )}
     >
       {style.label}

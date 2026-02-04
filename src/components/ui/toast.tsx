@@ -9,34 +9,39 @@ interface ToastProps {
 
 const variantConfig: Record<
   ToastVariant,
-  { icon: typeof CheckCircle2; className: string }
+  { icon: typeof CheckCircle2; className: string; progressColor: string }
 > = {
   success: {
     icon: CheckCircle2,
-    className: "border-emerald-700/40 bg-emerald-900/30 text-emerald-300",
+    className: "border-emerald-700/40 bg-emerald-900/30 text-emerald-300 shadow-[0_0_16px_rgba(16,185,129,0.15)]",
+    progressColor: "bg-emerald-500/50",
   },
   error: {
     icon: AlertCircle,
-    className: "border-red-700/40 bg-red-900/30 text-red-300",
+    className: "border-red-700/40 bg-red-900/30 text-red-300 shadow-[0_0_16px_rgba(239,68,68,0.15)]",
+    progressColor: "bg-red-500/50",
   },
   warning: {
     icon: AlertTriangle,
-    className: "border-amber-700/40 bg-amber-900/30 text-amber-300",
+    className: "border-amber-700/40 bg-amber-900/30 text-amber-300 shadow-[0_0_16px_rgba(234,179,8,0.15)]",
+    progressColor: "bg-amber-500/50",
   },
   info: {
     icon: Info,
-    className: "border-sky-700/40 bg-sky-900/30 text-sky-300",
+    className: "border-sky-700/40 bg-sky-900/30 text-sky-300 shadow-[0_0_16px_rgba(56,189,248,0.15)]",
+    progressColor: "bg-sky-500/50",
   },
 };
 
 export function Toast({ toast, onDismiss }: ToastProps) {
   const config = variantConfig[toast.variant];
   const Icon = config.icon;
+  const showProgress = toast.variant !== "error"; // Errors don't auto-dismiss
 
   return (
     <div
       className={cn(
-        "flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg transition-all duration-300",
+        "relative flex items-center gap-3 rounded-lg border px-4 py-3 transition-all duration-300 overflow-hidden",
         "animate-in slide-in-from-right-full fade-in",
         config.className
       )}
@@ -51,6 +56,17 @@ export function Toast({ toast, onDismiss }: ToastProps) {
       >
         <X className="h-4 w-4" />
       </button>
+      {/* Progress bar for auto-dismiss countdown */}
+      {showProgress && (
+        <div
+          className={cn(
+            "absolute bottom-0 left-0 h-0.5",
+            config.progressColor,
+            "animate-[shrink_3s_linear_forwards]"
+          )}
+          style={{ width: "100%" }}
+        />
+      )}
     </div>
   );
 }

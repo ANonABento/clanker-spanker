@@ -90,9 +90,13 @@ export function MiniTerminal({ output, className = "" }: MiniTerminalProps) {
   }, []);
 
   return (
-    <div
-      ref={terminalRef}
-      className={`overflow-hidden rounded border border-[#1a1a1a] ${className}`}
-    />
+    <div className={`relative ${className}`}>
+      <div
+        ref={terminalRef}
+        className="overflow-hidden rounded border-l-2 border-l-[#8b5cf6]/30 border border-[#1a1a1a] h-full"
+      />
+      {/* Fade overlay at bottom */}
+      <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-[#0a0a0a] to-transparent pointer-events-none rounded-b" />
+    </div>
   );
 }

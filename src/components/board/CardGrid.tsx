@@ -76,11 +76,11 @@ export function CardGrid({
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          <Inbox className="mx-auto h-12 w-12 text-[#404040] mb-4" />
-          <h2 className="text-lg font-medium text-[#808080] mb-2">
+          <Inbox className="mx-auto h-16 w-16 text-[#404040] mb-4 animate-float" />
+          <h2 className="text-lg font-medium text-[#909090] mb-2">
             No repository selected
           </h2>
-          <p className="text-sm text-[#505050] max-w-sm">
+          <p className="text-sm text-[#606060] max-w-sm">
             Click "Select repository..." in the header to add a GitHub repo. You
             can paste a full URL or use owner/repo format.
           </p>
@@ -139,9 +139,9 @@ export function CardGrid({
 function EmptyState() {
   return (
     <div className="flex h-64 flex-col items-center justify-center text-center">
-      <Inbox className="h-12 w-12 text-[#404040] mb-4" />
-      <h2 className="text-lg font-medium text-[#808080] mb-2">No open PRs</h2>
-      <p className="text-sm text-[#505050] max-w-sm">
+      <Inbox className="h-16 w-16 text-[#404040] mb-4 animate-float" />
+      <h2 className="text-lg font-medium text-[#909090] mb-2">No open PRs</h2>
+      <p className="text-sm text-[#606060] max-w-sm">
         Open pull requests will appear here. Click "Refresh" to check for
         updates.
       </p>
