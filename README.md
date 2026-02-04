@@ -1,4 +1,4 @@
-# Clanker Spanker
+# 🤖 Clanker Spanker 👋
 
 A desktop PR monitoring dashboard that watches your GitHub pull requests and automatically fixes CI failures and code review comments.
 
