@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+@theme {
+  /* Typography */
+  --font-family-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+
+  /* Dark Tech Color System */
+  --color-background: #0a0a0a;
+  --color-surface: #141414;
+  --color-surface-hover: #1a1a1a;
+  --color-surface-secondary: #0f0f0f;
+  --color-border: #262626;
+  --color-border-hover: #333333;
+
+  /* Text Colors */
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1a1;
+  --color-text-tertiary: #666666;
+
+  /* Accent (Violet) */
+  --color-accent: #8b5cf6;
+  --color-accent-hover: #a78bfa;
+
+  /* Status Colors */
+  --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-danger: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #06b6d4, #8b5cf6);
+  --gradient-secondary: linear-gradient(135deg, #3b82f6, #8b5cf6);
+}
+
+/* Base Styles - Dark by default */
+html {
+  color-scheme: dark;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Light Theme Override */
+html.light {
+  color-scheme: light;
+
+  --color-background: #fafafa;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f5f5f5;
+  --color-surface-secondary: #f0f0f0;
+  --color-border: #e5e5e5;
+  --color-border-hover: #d4d4d4;
+
+  --color-text-primary: #171717;
+  --color-text-secondary: #525252;
+  --color-text-tertiary: #a3a3a3;
+}
+
+html.light body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+html.light ::selection {
+  background-color: rgba(139, 92, 246, 0.2);
+  color: #171717;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+  background: #a3a3a3;
+}
+
+body {
+  font-family: var(--font-family-sans);
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  height: 100%;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Selection */
+::selection {
+  background-color: rgba(139, 92, 246, 0.3);
+  color: #fafafa;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444444;
+}
+
+/* Utility Classes for Design System */
+.text-primary {
+  color: var(--color-text-primary);
+}
+
+.text-secondary {
+  color: var(--color-text-secondary);
+}
+
+.text-tertiary {
+  color: var(--color-text-tertiary);
+}
+
+.bg-surface {
+  background-color: var(--color-surface);
+}
+
+.bg-surface-secondary {
+  background-color: var(--color-surface-secondary);
+}
+
+.border-default {
+  border-color: var(--color-border);
+}
+
+/* Glow Effects */
+.glow-accent {
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+}
+
+.glow-accent-strong {
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
+}
+
+.glow-success {
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.3);
+}
+
+.glow-danger {
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+}
+
+/* Gradient Backgrounds */
+.bg-gradient-primary {
+  background: var(--gradient-primary);
+}
+
+.bg-gradient-secondary {
+  background: var(--gradient-secondary);
+}
+
+/* Transitions */
+.transition-glow {
+  transition: box-shadow 200ms ease-out, border-color 200ms ease-out;
+}
+
+/* Focus Ring */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-accent);
+}
