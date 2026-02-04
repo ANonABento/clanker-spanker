@@ -1,6 +1,6 @@
 # 🤖 Clanker Spanker 👋
 
-A desktop PR monitoring dashboard that watches your GitHub pull requests and automatically fixes CI failures and code review comments.
+A macOS desktop app that monitors your GitHub pull requests and automatically fixes CI failures and code review comments using Claude AI.
 
 Built with Tauri 2 + React + TypeScript.
 
@@ -18,8 +18,6 @@ Built with Tauri 2 + React + TypeScript.
 
 ## Prerequisites
 
-Install these before running:
-
 | Tool | Purpose | Install |
 |------|---------|---------|
 | [Node.js](https://nodejs.org/) 18+ | Frontend build | `brew install node` |
@@ -28,11 +26,11 @@ Install these before running:
 | [jq](https://jqlang.github.io/jq/) | JSON processing in monitor script | `brew install jq` |
 | [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) | AI-powered fixes | `npm install -g @anthropic-ai/claude-code` |
 
-After installing, authenticate:
+After installing, authenticate both tools:
 
 ```bash
-gh auth login          # GitHub CLI
-claude                 # Claude CLI (follow setup prompts)
+gh auth login          # GitHub CLI — select HTTPS, authenticate via browser
+claude                 # Claude CLI — follow the setup prompts to link your account
 ```
 
 ## Setup
@@ -43,13 +41,45 @@ cd clanker-spanker
 npm install
 ```
 
+### Claude CLI Skills
+
+The monitor loop depends on two Claude CLI skill files in `~/.claude/commands/`:
+
+- **`handle-pr-comments.md`** — Categorizes and fixes unresolved review threads
+- **`fix-ci.md`** — Reads CI failure logs and applies fixes
+
+These are custom prompt files, not built into Claude CLI. You need to create them or get them from whoever shared this repo. Place them at:
+
+```
+~/.claude/commands/handle-pr-comments.md
+~/.claude/commands/fix-ci.md
+```
+
+Without these files, the monitor will still run its loop but skip the AI fix steps (it logs a warning and continues).
+
+### Local Repo Clone
+
+The monitor script needs a local git clone of the repo it's monitoring so Claude can read and edit the code. It searches these directories in order:
+
+1. `~/conductor/workspaces/<repo-name>/` (Conductor worktrees — picks most recently modified)
+2. `~/<owner>/<repo-name>/`
+3. `~/repos/<owner>/<repo-name>/`
+4. `~/code/<owner>/<repo-name>/`
+5. `~/repos/<repo-name>/`
+6. `~/code/<repo-name>/`
+7. `~/projects/<repo-name>/`
+8. `~/workspace/<repo-name>/`
+9. `~/ghq/github.com/<owner>/<repo-name>/`
+
+If not found, it falls back to the current directory with a warning. **Make sure you have a local clone in one of these locations before starting a monitor.**
+
 ## Running
 
 ```bash
-# Development (hot reload)
+# Development (hot reload for both frontend and Rust backend)
 npm run dev
 
-# Production build
+# Production build (creates .app bundle in src-tauri/target/release/bundle/)
 npm run tauri build
 ```
 
@@ -57,24 +87,24 @@ npm run tauri build
 
 ### Adding a Repository
 
-Click **"Select repository..."** in the header bar. Paste a full GitHub URL or use `owner/repo` format. The app fetches all open PRs where you're involved.
+Click **"Select repository..."** in the header bar. Paste a full GitHub URL (`https://github.com/owner/repo`) or use `owner/repo` format. The app fetches all open PRs where you're involved (`involves:@me`).
 
 ### Monitoring a PR
 
 Click the **Monitor** button on any PR card. This starts the monitor loop:
 
-1. Check CI status (waits up to 15 minutes if pending)
+1. Check CI status (waits up to 15 min if pending)
 2. If CI is failing, invoke `/fix-ci` via Claude to fix it
 3. Fetch all review threads via GraphQL (with pagination)
 4. If unresolved comments exist, invoke `/handle-pr-comments` via Claude to categorize and fix them
 5. Sleep for the configured interval (default: 15 minutes)
 6. Repeat until PR is clean or max iterations reached (default: 10)
 
-Progress is shown in real-time via a purple progress bar and mini terminal output on the card.
+Progress is shown in real-time via a purple progress bar and mini terminal output on the card. When complete, the bar turns green and shows the final iteration count (e.g., `2/10`).
 
 ### Expanded Terminal View
 
-Click the **expand** button on a monitoring card to enter split view — compact PR list on the left, full terminal output on the right.
+Click the **expand** icon on a monitoring card to enter split view — compact PR list on the left, full terminal output on the right. Press `Esc` or click **Collapse** to return to the grid.
 
 ### Keyboard Shortcuts
 
@@ -86,122 +116,164 @@ Click the **expand** button on a monitoring card to enter split view — compact
 | `r` | Refresh all PRs |
 | `?` | Show shortcuts help |
 | `Esc` | Close dialogs / clear focus |
+| `Cmd+Shift+P` | Global: show/hide window from anywhere |
 
 ### Drag and Drop
 
-Drag PR cards to reorder them. Order persists across sessions.
+Drag PR cards to reorder them. Order persists across sessions (stored in localStorage).
+
+### Filters
+
+Click the filter icon in the header to filter PRs by:
+- **Status**: CI passing/failing, review approved/changes requested
+- **Labels**: Any GitHub labels on the PRs
+- **Authors**: PR author
 
 ### Dismissing Merged PRs
 
-Merged PRs show a green **Merged** badge and a **Dismiss** button. Dismissing hides the card (reversible by clearing the cache).
+Merged PRs show a green **Merged** badge and a **Dismiss** button. Dismissing hides the card from the grid. To restore dismissed PRs, open devtools and run:
 
-## Claude CLI Skills
+```js
+localStorage.removeItem("dismissed-prs")
+```
 
-The monitor loop uses two Claude CLI skills:
+Then refresh.
 
-### `/handle-pr-comments <PR_NUM> <REPO>`
+## Settings
 
-Fetches unresolved review threads, categorizes them (FIX vs SKIP), applies code fixes, runs type-check, commits, pushes, and resolves threads.
+Click the gear icon in the header:
 
-Options:
-- `--threads-file <path>` — Use pre-fetched thread data (skips API call)
-- `--review-only` — Categorize and report without fixing
+| Setting | Description |
+|---------|-------------|
+| **Theme** | Dark or Light mode |
+| **Start on login** | Auto-launch at macOS login |
+| **Prevent sleep** | Keep Mac awake while any monitor is active |
 
-### `/fix-ci --pr <PR_NUM>`
+Monitor defaults (max iterations = 10, interval = 15 min) are currently hardcoded. To change them per-monitor, use the API (see below). To change the defaults globally, edit `src-tauri/src/monitor.rs`.
 
-Reads CI failure logs and applies fixes to make tests/builds pass.
+## API Server
 
-Both skills are defined in `~/.claude/commands/` and run via `claude -p`.
-
-## Configuration
-
-### Settings Dialog
-
-Click the gear icon to access:
-- **Theme**: Dark / Light
-- **Sleep Prevention**: Keep Mac awake while monitors are active
-- **Monitor Defaults**: Max iterations, check interval
-
-### API Server
-
-The app runs an HTTP API on port `7890` for external integrations:
+The app runs an HTTP API on localhost port `7890` for external integrations (e.g., starting a monitor from a CLI script or another tool):
 
 ```bash
-# Start a monitor via API
+# Start a monitor
 curl -X POST http://localhost:7890/api/monitors \
   -H "Content-Type: application/json" \
-  -d '{"prNumber": 123, "repo": "owner/repo", "maxIterations": 10, "intervalMinutes": 15}'
+  -d '{
+    "pr_number": 123,
+    "repo": "owner/repo",
+    "max_iterations": 10,
+    "interval_minutes": 15
+  }'
 
 # Stop a monitor
 curl -X DELETE http://localhost:7890/api/monitors/<monitor_id>
 ```
+
+Only accessible from localhost. The API starts automatically when the app launches.
 
 ## Architecture
 
 ```
 src-tauri/
   src/
-    lib.rs              # Tauri commands, PR fetching, caching
-    api.rs              # HTTP API server (port 7890)
-    db.rs               # SQLite database (PR cache, monitors, settings)
-    monitor.rs          # Monitor lifecycle management
-    process.rs          # Child process spawning, stdout parsing
-    tray.rs             # System tray with active monitor count
-    dock.rs             # macOS dock badge
-    sleep_prevention.rs # Prevent sleep during monitoring
+    lib.rs              # Tauri commands, PR fetching via gh CLI, SQLite caching
+    api.rs              # HTTP API server (port 7890, localhost only)
+    db.rs               # SQLite schema and queries
+    monitor.rs          # Monitor lifecycle (start, stop, status tracking)
+    process.rs          # Child process spawning, stdout/stderr parsing
+    tray.rs             # System tray icon with active monitor count
+    dock.rs             # macOS dock badge (active monitor count)
+    sleep_prevention.rs # IOKit assertion to prevent macOS sleep
+    notifications.rs    # macOS native notifications
+    hotkey.rs           # Global Cmd+Shift+P hotkey registration
   scripts/
-    monitor-pr-loop.sh  # Main monitoring loop (bash)
+    monitor-pr-loop.sh  # Bash script executed per monitored PR
 
 src/
   App.tsx               # Main app: grid view, split view, event listeners
   hooks/
     usePRs.ts           # PR fetching with incremental cache
-    useMonitors.ts      # Monitor state polling
-    usePROrder.ts       # Drag-and-drop ordering persistence
-    useDismissedPRs.ts  # Dismissed PR tracking
+    useMonitors.ts      # Monitor state polling (every 5s)
+    usePROrder.ts       # Drag-and-drop ordering (localStorage)
+    useDismissedPRs.ts  # Dismissed PR tracking (localStorage)
+    useKeyboardNav.ts   # Vim-style keyboard navigation
+    useRepos.ts         # Repository selection and management
+    useFilters.ts       # PR filtering state
   components/
-    board/              # PRCard, CardGrid, SortablePRCard
-    terminal/           # MiniTerminal, FullTerminal (xterm.js)
-    layout/             # Header, RepoManager, FilterPanel
+    board/              # PRCard, CardGrid, SortablePRCard, PRCardSkeleton
+    terminal/           # MiniTerminal (3-4 line preview), FullTerminal (xterm.js)
+    layout/             # Header, RepoManager, RepoSelector, FilterPanel
     settings/           # SettingsDialog
   lib/
-    tauri.ts            # IPC command wrappers
-    types.ts            # TypeScript interfaces
+    tauri.ts            # IPC command wrappers (invoke helpers)
+    types.ts            # TypeScript interfaces (PR, Monitor, etc.)
     filters.ts          # PR filtering logic
-    time.ts             # Relative time formatting
+    time.ts             # Relative time formatting ("3m ago", countdown)
 ```
 
 ### Data Flow
 
 ```
-GitHub API (gh CLI)
+GitHub (gh CLI)
     |
     v
 Rust Backend (Tauri)
-    |-- SQLite cache (PR data, monitor state)
-    |-- Spawns monitor-pr-loop.sh as child process
-    |-- Parses @@ITERATION:N/M@@ markers from stdout
+    |-- Fetches PRs via `gh pr list` -> caches in SQLite
+    |-- Checks stale cached PRs for merged/closed state
+    |-- Spawns monitor-pr-loop.sh as child process per PR
+    |-- Parses @@ITERATION:N/M@@ markers from stdout -> updates DB
     |-- Emits Tauri events: monitor:output, monitor:completed
+    |-- HTTP API on :7890 for external start/stop
+    |
     v
 React Frontend
-    |-- Polls monitors every 5s
-    |-- Listens for Tauri events
-    |-- Renders PR cards with live progress
+    |-- Polls monitor status every 5 seconds
+    |-- Listens for Tauri events (terminal output, completion)
+    |-- Renders PR cards with live progress bars
+    |-- Persists card order and dismissed PRs in localStorage
 ```
+
+## Platform Support
+
+**macOS only.** The app uses macOS-specific APIs:
+- IOKit for sleep prevention
+- NSApplication for dock badges
+- Cocoa for tray icon
+- NSUserNotificationCenter for native notifications
+
+The frontend and core Tauri logic are cross-platform, but the Rust backend would need platform-specific guards (`#[cfg(target_os)]`) and alternative implementations for Linux/Windows.
 
 ## Troubleshooting
 
-**PRs not loading**: Make sure `gh auth status` shows you're authenticated. The app uses `gh pr list --search "involves:@me"` to find your PRs.
+**PRs not loading**
+- Run `gh auth status` and confirm you're logged in to github.com
+- The app fetches PRs with `gh pr list --search "involves:@me"` — make sure the repo has PRs involving your account
 
-**Monitor exits immediately**: Check that `jq` is installed. The monitor script uses it for JSON processing. Also check `claude` is available in PATH.
+**Monitor exits immediately after iteration 1**
+- Verify `jq` is installed: `which jq`
+- Verify `claude` is in PATH: `which claude`
+- Check the monitor terminal output for error messages
 
-**Claude skills not found**: Skills must be in `~/.claude/commands/`. Copy `handle-pr-comments.md` and `fix-ci.md` there.
+**Claude skills not found**
+- Verify: `ls ~/.claude/commands/handle-pr-comments.md ~/.claude/commands/fix-ci.md`
+- Without these, the monitor logs a warning and skips the fix step
 
-**Stale PR data**: Click the Refresh button in the header, or press `r`. Force refresh fetches fresh data from GitHub and updates the cache.
+**No local repo clone found**
+- The monitor terminal will show "Warning: Could not find local clone of owner/repo"
+- Clone the repo into one of the [searched paths](#local-repo-clone)
+
+**Stale PR data / merged PRs missing**
+- Click Refresh in the header or press `r`
+- Force refresh fetches from GitHub and checks cached PRs for merged/closed state
+
+**App window doesn't appear**
+- Use the global shortcut `Cmd+Shift+P` to show/hide the window
+- Check the system tray (menu bar) for the Clanker Spanker icon
 
 ## Tech Stack
 
 - **Frontend**: React 19, TypeScript 5.8, Tailwind CSS 4, Vite 7, xterm.js, dnd-kit
-- **Backend**: Rust, Tauri 2, SQLite (rusqlite), Chrono
-- **Platform**: macOS (tray, dock badges, sleep prevention, notifications)
-- **AI**: Claude CLI with custom skills for code review and CI fixing
+- **Backend**: Rust, Tauri 2, SQLite (rusqlite), tiny-http, Chrono
+- **Platform**: macOS (IOKit, Cocoa, NSApplication)
+- **AI**: Claude CLI with custom skills (`/handle-pr-comments`, `/fix-ci`)
