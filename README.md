@@ -1,8 +1,13 @@
 # Clanker Spanker
 
-A desktop PR monitoring dashboard that watches your GitHub pull requests and automatically fixes CI failures and code review comments using Claude AI.
+A desktop PR monitoring dashboard that watches your GitHub pull requests and automatically fixes CI failures and code review comments.
 
 Built with Tauri 2 + React + TypeScript.
+
+<div style="display: flex">
+  <img src="https://github.com/user-attachments/assets/c813b263-137a-4b80-b9fa-33f7f152c725" style="width: 49%;">
+  <img src="https://github.com/user-attachments/assets/16e4563d-7d4b-4579-8f20-6ef8770df65f" style="width: 49%;">
+</div>
 
 ## What It Does
 
