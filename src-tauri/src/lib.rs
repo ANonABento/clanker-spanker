@@ -376,14 +376,10 @@ fn fetch_prs(
             }
         }
 
-        // Return cached PRs for incremental, or fetched PRs for full refresh
-        if last_fetch.is_some() {
-            match get_cached_prs_for_repo(&conn, &repo_path) {
-                Ok(cached) => all_prs.extend(cached),
-                Err(e) => eprintln!("Failed to get cached PRs: {}", e),
-            }
-        } else {
-            all_prs.extend(prs);
+        // Always return from cache so merged/closed PRs are included
+        match get_cached_prs_for_repo(&conn, &repo_path) {
+            Ok(cached) => all_prs.extend(cached),
+            Err(e) => eprintln!("Failed to get cached PRs: {}", e),
         }
     }
 

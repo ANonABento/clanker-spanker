@@ -291,6 +291,7 @@ function App() {
             onStartMonitor={handleStartMonitor}
             onStopMonitor={handleStopMonitor}
             getMonitorForPR={getMonitorForPR}
+            completedMonitors={completedMonitors}
           />
         ) : (
           // Grid View (default)
@@ -328,6 +329,7 @@ interface SplitViewProps {
   onStartMonitor: (pr: PR) => void;
   onStopMonitor: (pr: PR) => void;
   getMonitorForPR: (prId: string) => any;
+  completedMonitors: Record<string, { monitorId: string; prNumber: number; iteration: number; maxIterations: number; exitReason: string }>;
 }
 
 function SplitView({
@@ -340,6 +342,7 @@ function SplitView({
   onStartMonitor,
   onStopMonitor,
   getMonitorForPR,
+  completedMonitors,
 }: SplitViewProps) {
   const monitor = getMonitorForPR(expandedPR.id);
 
@@ -354,6 +357,7 @@ function SplitView({
             monitor={getMonitorForPR(pr.id)}
             isFocused={pr.id === focusedPRId}
             isCompact
+            hasCompletedMonitor={!!completedMonitors[pr.id]}
             onStartMonitor={onStartMonitor}
             onStopMonitor={onStopMonitor}
             onExpand={onExpand}

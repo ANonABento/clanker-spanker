@@ -231,8 +231,7 @@ run_fix_ci() {
   echo -e "${CYAN}🔧 Running /fix-ci to fix CI failures...${RESET}"
   if command -v claude &> /dev/null; then
     (cd "$REPO_DIR" && claude -p "/fix-ci --pr $PR_NUM" --verbose --output-format stream-json --dangerously-skip-permissions 2>&1) | \
-      jq -r --unbuffered 'select(.type) | if .type == "assistant" then (.message.content[]?.text // empty) elif .type == "result" then (.result.content[]?.text // empty) elif .type == "content_block_delta" then (.delta.text // empty) else empty end' 2>/dev/null || \
-      echo -e "${YELLOW}⚠️ /fix-ci encountered an issue${RESET}"
+      jq -r --unbuffered 'select(.type) | if .type == "assistant" then (.message.content[]?.text // empty) elif .type == "result" then (.result.content[]?.text // empty) elif .type == "content_block_delta" then (.delta.text // empty) else empty end' 2>/dev/null || true
   else
     echo -e "${YELLOW}⚠️ Claude CLI not found, skipping CI fix${RESET}"
   fi
@@ -351,9 +350,8 @@ for iter in $(seq 1 $MAX_ITER); do
       # Run Claude and capture exit code separately from jq parsing
       # Don't treat jq parse errors as skill failures
       (cd "$REPO_DIR" && claude -p "/handle-pr-comments $PR_NUM $REPO --threads-file $THREADS_FILE" --verbose --output-format stream-json --dangerously-skip-permissions 2>&1) | \
-        jq -r --unbuffered 'select(.type) | if .type == "assistant" then (.message.content[]?.text // empty) elif .type == "result" then (.result.content[]?.text // empty) elif .type == "content_block_delta" then (.delta.text // empty) else empty end' 2>/dev/null
-      # Note: We don't use || here because jq may exit non-zero on incomplete JSON streams
-      # The skill output is what matters, not the jq exit code
+        jq -r --unbuffered 'select(.type) | if .type == "assistant" then (.message.content[]?.text // empty) elif .type == "result" then (.result.content[]?.text // empty) elif .type == "content_block_delta" then (.delta.text // empty) else empty end' 2>/dev/null || true
+      # jq may exit non-zero on incomplete JSON streams; || true prevents set -e from killing the loop
     else
       echo -e "${YELLOW}⚠️ Claude CLI not found, skipping comment handling${RESET}"
     fi

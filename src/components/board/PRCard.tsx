@@ -58,7 +58,17 @@ export function PRCard({
             />
           </div>
         )}
-        {!isMonitoring && onStartMonitor && (
+        {!isMonitoring && pr.state === "merged" && (
+          <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">
+            Merged
+          </span>
+        )}
+        {!isMonitoring && pr.state !== "merged" && hasCompletedMonitor && (
+          <span className="text-xs px-2 py-0.5 rounded bg-[#1a1a1a] text-[#707070] font-medium">
+            Logged
+          </span>
+        )}
+        {!isMonitoring && pr.state !== "merged" && !hasCompletedMonitor && onStartMonitor && (
           <button
             onClick={(e) => {
               e.stopPropagation();
