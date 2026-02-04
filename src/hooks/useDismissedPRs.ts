@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { dismissPR as dismissPRFromDB } from "@/lib/tauri";
 
 const STORAGE_KEY = "dismissed-prs";
 
@@ -25,7 +26,12 @@ export function useDismissedPRs() {
   }, [dismissedIds]);
 
   const dismiss = useCallback((prId: string) => {
+    // Update local state immediately
     setDismissedIds((prev) => new Set([...prev, prId]));
+    // Also remove from database cache (async, fire-and-forget)
+    dismissPRFromDB(prId).catch((e) => {
+      console.error("Failed to dismiss PR from database:", e);
+    });
   }, []);
 
   const restore = useCallback((prId: string) => {

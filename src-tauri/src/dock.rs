@@ -1,8 +1,20 @@
 //! macOS dock badge functionality
 
 /// Set the dock badge count on macOS
+/// Must dispatch to main thread since AppKit calls are not thread-safe
 #[cfg(target_os = "macos")]
 pub fn set_dock_badge(count: Option<i32>) {
+    use dispatch::Queue;
+
+    // Dispatch to main queue to ensure we're on the main thread
+    Queue::main().exec_async(move || {
+        set_dock_badge_inner(count);
+    });
+}
+
+/// Inner implementation that must run on main thread
+#[cfg(target_os = "macos")]
+fn set_dock_badge_inner(count: Option<i32>) {
     use cocoa::appkit::NSApp;
     use cocoa::base::nil;
     use cocoa::foundation::NSString;

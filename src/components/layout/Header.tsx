@@ -1,7 +1,9 @@
+import { useState, useEffect } from "react";
 import { RefreshCw, Settings, Filter, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RepoManager } from "./RepoManager";
 import { FilterPanel } from "@/components/filters/FilterPanel";
+import { formatRelativeTimeFromDate } from "@/lib/time";
 import type { PRFilters } from "@/lib/filters";
 
 interface HeaderProps {
@@ -18,6 +20,7 @@ interface HeaderProps {
   availableLabels: string[];
   availableAuthors: string[];
   availableRepos: string[];
+  lastRefreshTime?: Date | null;
 }
 
 export function Header({
@@ -34,7 +37,16 @@ export function Header({
   availableLabels,
   availableAuthors,
   availableRepos,
+  lastRefreshTime,
 }: HeaderProps) {
+  // Tick every 60s so the "X minutes ago" text stays current
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!lastRefreshTime) return;
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, [lastRefreshTime]);
+
   return (
     <header className="flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a] px-6 py-4">
       <div className="flex items-center gap-4">
@@ -95,16 +107,23 @@ export function Header({
 
         <div className="h-5 w-px bg-[#2a2a2a]" />
 
+        {lastRefreshTime && (
+          <span className="text-xs text-[#606060]">
+            {formatRelativeTimeFromDate(lastRefreshTime)}
+          </span>
+        )}
+
         <Button
           variant="secondary"
           size="sm"
-          onClick={onRefresh}
+          onClick={() => onRefresh()}
           disabled={isLoading}
+          className={isLoading ? "opacity-70" : ""}
         >
           <RefreshCw
-            className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
+            className={`h-4 w-4 ${isLoading ? "animate-spin text-[#8b5cf6]" : ""}`}
           />
-          Refresh
+          {isLoading ? "Refreshing..." : "Refresh"}
         </Button>
         <Button
           variant="ghost"

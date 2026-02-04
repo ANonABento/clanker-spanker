@@ -13,10 +13,12 @@ interface SortablePRCardProps {
   onStopMonitor?: (pr: PR) => void;
   onOpenInGitHub?: (pr: PR) => void;
   onExpand?: (pr: PR) => void;
+  onDismiss?: (pr: PR) => void;
+  hasCompletedMonitor?: boolean;
+  completedMonitorData?: { iteration: number; maxIterations: number; exitReason: string };
 }
 
 export function SortablePRCard(props: SortablePRCardProps) {
-  // Destructure onOpenInGitHub so it's not passed to PRCard (we handle clicks here)
   const { onOpenInGitHub, ...prCardProps } = props;
   const wasDragging = useRef(false);
 
@@ -38,18 +40,20 @@ export function SortablePRCard(props: SortablePRCardProps) {
     }
   }, [isDragging]);
 
-  const handleClick = (e: React.MouseEvent) => {
-    // Don't open if we were dragging
+  // Wrapper that prevents opening GitHub during drag
+  const handleOpenInGitHub = (pr: PR) => {
     if (wasDragging.current) {
       wasDragging.current = false;
       return;
     }
-    // Don't open if clicking a button
-    if ((e.target as HTMLElement).closest("button")) {
-      return;
+    onOpenInGitHub?.(pr);
+  };
+
+  // Reset drag state on any click (for cases where header wasn't clicked)
+  const handleClick = () => {
+    if (wasDragging.current) {
+      wasDragging.current = false;
     }
-    e.stopPropagation();
-    onOpenInGitHub?.(props.pr);
   };
 
   const style: React.CSSProperties = {
@@ -73,7 +77,7 @@ export function SortablePRCard(props: SortablePRCardProps) {
       {...listeners}
       onClick={handleClick}
     >
-      <PRCard {...prCardProps} />
+      <PRCard {...prCardProps} onOpenInGitHub={handleOpenInGitHub} />
     </div>
   );
 }

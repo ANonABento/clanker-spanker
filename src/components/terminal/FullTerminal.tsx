@@ -9,12 +9,21 @@ interface FullTerminalProps {
   className?: string;
 }
 
+// Check if terminal is scrolled to bottom
+function isAtBottom(terminal: Terminal): boolean {
+  const buffer = terminal.buffer.active;
+  // viewportY = line at top of viewport, baseY = line at top when scrolled to bottom
+  // When at bottom: viewportY >= baseY
+  return buffer.viewportY >= buffer.baseY;
+}
+
 export function FullTerminal({ output, onInput, className = "" }: FullTerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const lastOutputLengthRef = useRef(0);
   const inputBufferRef = useRef("");
+  const userScrolledRef = useRef(false);
 
   // Initialize terminal
   useEffect(() => {
@@ -89,6 +98,12 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
     lastOutputLengthRef.current = 0;
+    userScrolledRef.current = false;
+
+    // Track when user scrolls away from bottom
+    terminal.onScroll(() => {
+      userScrolledRef.current = !isAtBottom(terminal);
+    });
 
     // Write initial output
     output.forEach((line) => {
@@ -104,10 +119,13 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
     };
   }, [onInput]);
 
-  // Write new output lines
+  // Write new output lines (preserving user scroll position)
   useEffect(() => {
     const terminal = xtermRef.current;
     if (!terminal) return;
+
+    // Check if user was at bottom before writing
+    const wasAtBottom = isAtBottom(terminal);
 
     // Only write new lines
     const newLines = output.slice(lastOutputLengthRef.current);
@@ -115,6 +133,11 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
       terminal.writeln(line);
     });
     lastOutputLengthRef.current = output.length;
+
+    // Only auto-scroll if user was at bottom (respect their scroll position)
+    if (wasAtBottom && newLines.length > 0) {
+      terminal.scrollToBottom();
+    }
   }, [output]);
 
   // Handle resize
@@ -151,7 +174,7 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
     <div
       ref={terminalRef}
       onClick={handleClick}
-      className={`overflow-hidden ${className}`}
+      className={`overflow-hidden p-3 ${className}`}
     />
   );
 }

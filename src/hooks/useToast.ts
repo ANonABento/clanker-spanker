@@ -46,24 +46,27 @@ export function useToast(): UseToastReturn {
     (
       message: string,
       variant: ToastVariant = "info",
-      duration: number = DEFAULT_DURATION
+      duration?: number
     ) => {
       const id = `toast-${++toastIdCounter}`;
+
+      // Error toasts don't auto-dismiss by default
+      const effectiveDuration = duration ?? (variant === "error" ? 0 : DEFAULT_DURATION);
 
       const newToast: Toast = {
         id,
         message,
         variant,
-        duration,
+        duration: effectiveDuration,
       };
 
       setToasts((prev) => [...prev, newToast]);
 
-      // Auto-dismiss
-      if (duration > 0) {
+      // Auto-dismiss (unless duration is 0)
+      if (effectiveDuration > 0) {
         const timer = setTimeout(() => {
           dismissToast(id);
-        }, duration);
+        }, effectiveDuration);
         timersRef.current.set(id, timer);
       }
     },

@@ -2,6 +2,33 @@ import { invoke } from "@tauri-apps/api/core";
 import type { PR, Monitor, PRComment } from "./types";
 
 /**
+ * Safe invoke wrapper that handles errors gracefully
+ * and breaks any potential reference cycles in the response
+ */
+async function safeInvoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+  try {
+    const result = await invoke<T>(cmd, args);
+    // Deep clone the result to break any potential cyclic references
+    return JSON.parse(JSON.stringify(result));
+  } catch (err) {
+    // Extract error message safely without triggering serialization issues
+    let message: string;
+    if (err instanceof Error) {
+      message = err.message;
+    } else if (typeof err === "string") {
+      message = err;
+    } else {
+      try {
+        message = JSON.stringify(err);
+      } catch {
+        message = String(err);
+      }
+    }
+    throw new Error(message);
+  }
+}
+
+/**
  * Fetch PRs from GitHub via the Rust backend with incremental caching
  * Supports single repo or multiple repos
  * @param options.forceRefresh - If true, bypasses cache and fetches all PRs
@@ -11,7 +38,7 @@ export async function fetchPRs(options?: {
   repos?: string[];
   forceRefresh?: boolean;
 }): Promise<PR[]> {
-  return invoke<PR[]>("fetch_prs", {
+  return safeInvoke<PR[]>("fetch_prs", {
     repo: options?.repo ?? null,
     repos: options?.repos ?? null,
     forceRefresh: options?.forceRefresh ?? false,
@@ -37,6 +64,14 @@ export async function getCachedPRs(options?: {
  */
 export async function clearPRCache(repo?: string): Promise<void> {
   return invoke<void>("clear_pr_cache", { repo: repo ?? null });
+}
+
+/**
+ * Dismiss a PR from the dashboard (removes from cache)
+ * Use this to dismiss merged/closed PRs
+ */
+export async function dismissPR(prId: string): Promise<void> {
+  return invoke<void>("dismiss_pr", { prId });
 }
 
 // ============ Repo Management Commands ============
@@ -147,6 +182,13 @@ export async function getMonitor(monitorId: string): Promise<Monitor> {
  */
 export async function getMonitorForPR(prId: string): Promise<Monitor | null> {
   return invoke<Monitor | null>("get_monitor_for_pr", { prId });
+}
+
+/**
+ * Get the most recent monitor for a PR (including completed/failed)
+ */
+export async function getRecentMonitorForPR(prId: string): Promise<Monitor | null> {
+  return invoke<Monitor | null>("get_recent_monitor_for_pr", { prId });
 }
 
 // ============ PR Comment Commands ============
