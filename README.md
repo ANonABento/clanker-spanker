@@ -5,8 +5,8 @@ A macOS desktop app that monitors your GitHub pull requests and automatically fi
 Built with Tauri 2 + React + TypeScript.
 
 <div style="display: flex">
-  <img src="https://github.com/user-attachments/assets/c813b263-137a-4b80-b9fa-33f7f152c725" style="width: 49%;">
-  <img src="https://github.com/user-attachments/assets/16e4563d-7d4b-4579-8f20-6ef8770df65f" style="width: 49%;">
+  <img width="1728" height="1084" alt="image" src="https://github.com/user-attachments/assets/37aba000-4dee-444d-bbb7-081567233967" />
+  <img width="1728" height="1084" alt="image" src="https://github.com/user-attachments/assets/aa60d083-f3f6-4591-8f62-95be3c5efbf5" />
 </div>
 
 ## What It Does
