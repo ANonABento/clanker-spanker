@@ -3,7 +3,7 @@
 # Clanker Spanker - PR Monitor Loop
 # Monitors PR for new comments and auto-fixes them via Claude Code
 #
-# Usage: ./monitor-pr-loop.sh <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES]
+# Usage: ./monitor-pr-loop.sh <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [STEPS]
 #
 
 set -e
@@ -19,10 +19,29 @@ DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES]}"
-REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES]}"
+PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [STEPS]}"
+REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [STEPS]}"
 MAX_ITER="${3:-10}"
 INTERVAL="${4:-15}"
+PENDING_WAIT_MINUTES="${5:-15}"
+STEPS="${6:-both}"
+
+DO_CI=1
+DO_COMMENTS=1
+case "$STEPS" in
+  ci)
+    DO_CI=1
+    DO_COMMENTS=0
+    ;;
+  comments)
+    DO_CI=0
+    DO_COMMENTS=1
+    ;;
+  both|*)
+    DO_CI=1
+    DO_COMMENTS=1
+    ;;
+esac
 
 # Parse owner/repo
 OWNER="${REPO%%/*}"
@@ -124,7 +143,7 @@ echo ""
 echo -e "${CYAN}╭─────────────────────────────────────────────────────────────╮${RESET}"
 echo -e "${CYAN}│${RESET}  ${BOLD}📋 Clanker Spanker${RESET} - PR ${MAGENTA}#$PR_NUM${RESET}"
 echo -e "${CYAN}│${RESET}  ${DIM}Repo:${RESET} $REPO"
-echo -e "${CYAN}│${RESET}  ${DIM}Checking every ${INTERVAL}m | Max $MAX_ITER iterations${RESET}"
+echo -e "${CYAN}│${RESET}  ${DIM}Checking every ${INTERVAL}m | Max $MAX_ITER iterations | Steps: $STEPS${RESET}"
 echo -e "${CYAN}╰─────────────────────────────────────────────────────────────╯${RESET}"
 echo ""
 
@@ -248,29 +267,11 @@ for iter in $(seq 1 $MAX_ITER); do
   echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 
   # ═══════════════════════════════════════════════════════════════
-  # STEP 1: Check CI status (wait if pending, max 3x5min = 15min)
+  # STEP 1: Check CI status (wait if pending)
   # ═══════════════════════════════════════════════════════════════
   echo ""
-  echo -e "${DIM}🔄 Checking CI status...${RESET}"
-  ci_status=$(check_ci_status)
-  case "$ci_status" in
-    success) ci_color="${GREEN}" ;;
-    failure) ci_color="${RED}" ;;
-    pending) ci_color="${YELLOW}" ;;
-    *) ci_color="${DIM}" ;;
-  esac
-  echo -e "📊 CI Status: ${ci_color}${ci_status}${RESET}"
-  echo "@@CI_STATUS:$ci_status@@"
-
-  # Wait for CI if pending (max 3 waits of 5 minutes each)
-  ci_waits=0
-  max_ci_waits=3
-  while [ "$ci_status" = "pending" ] && [ $ci_waits -lt $max_ci_waits ]; do
-    ci_waits=$((ci_waits + 1))
-    echo -e "${YELLOW}⏳ CI pending, waiting 5 minutes... ($ci_waits/$max_ci_waits)${RESET}"
-    echo "@@CI_WAIT:$ci_waits/$max_ci_waits@@"
-    sleep 300  # 5 minutes
-
+  if [ "$DO_CI" -eq 1 ]; then
+    echo -e "${DIM}🔄 Checking CI status...${RESET}"
     ci_status=$(check_ci_status)
     case "$ci_status" in
       success) ci_color="${GREEN}" ;;
@@ -280,48 +281,99 @@ for iter in $(seq 1 $MAX_ITER); do
     esac
     echo -e "📊 CI Status: ${ci_color}${ci_status}${RESET}"
     echo "@@CI_STATUS:$ci_status@@"
-  done
+  else
+    ci_status="skipped"
+    echo -e "${DIM}⏭️  CI checks skipped (steps=$STEPS)${RESET}"
+    echo "@@CI_STATUS:skipped@@"
+  fi
+
+  # Wait for CI if pending (in 5-minute increments)
+  if [ "$DO_CI" -eq 1 ]; then
+    ci_waits=0
+    wait_step_minutes=5
+    if [ "$PENDING_WAIT_MINUTES" -lt 0 ]; then
+      PENDING_WAIT_MINUTES=0
+    fi
+    max_ci_waits=$(( (PENDING_WAIT_MINUTES + wait_step_minutes - 1) / wait_step_minutes ))
+    while [ "$ci_status" = "pending" ] && [ $ci_waits -lt $max_ci_waits ]; do
+      ci_waits=$((ci_waits + 1))
+      echo -e "${YELLOW}⏳ CI pending, waiting ${wait_step_minutes} minutes... ($ci_waits/$max_ci_waits)${RESET}"
+      echo "@@CI_WAIT:$ci_waits/$max_ci_waits@@"
+      sleep $((wait_step_minutes * 60))
+
+      ci_status=$(check_ci_status)
+      case "$ci_status" in
+        success) ci_color="${GREEN}" ;;
+        failure) ci_color="${RED}" ;;
+        pending) ci_color="${YELLOW}" ;;
+        *) ci_color="${DIM}" ;;
+      esac
+      echo -e "📊 CI Status: ${ci_color}${ci_status}${RESET}"
+      echo "@@CI_STATUS:$ci_status@@"
+    done
+  fi
 
   # ═══════════════════════════════════════════════════════════════
   # STEP 2: Fix CI if failed
   # ═══════════════════════════════════════════════════════════════
-  if [ "$ci_status" = "failure" ]; then
-    echo ""
-    echo -e "${RED}❌ CI failing - fixing first...${RESET}"
-    run_fix_ci
-  elif [ "$ci_status" = "success" ]; then
-    echo -e "${GREEN}✅ CI passing${RESET}"
-  elif [ "$ci_status" = "pending" ]; then
-    echo -e "${YELLOW}⏳ CI still pending after max wait, continuing anyway...${RESET}"
+  if [ "$DO_CI" -eq 1 ]; then
+    if [ "$ci_status" = "failure" ]; then
+      echo ""
+      echo -e "${RED}❌ CI failing - fixing first...${RESET}"
+      run_fix_ci
+    elif [ "$ci_status" = "success" ]; then
+      echo -e "${GREEN}✅ CI passing${RESET}"
+    elif [ "$ci_status" = "pending" ]; then
+      echo -e "${YELLOW}⏳ CI still pending after max wait, continuing anyway...${RESET}"
+    fi
+  fi
+
+  if [ "$DO_COMMENTS" -eq 0 ]; then
+    if [ "$DO_CI" -eq 1 ] && [ "$ci_status" = "success" ]; then
+      echo "@@STATUS:clean@@"
+      echo -e "${GREEN}${BOLD}✅ PR is clean!${RESET} ${GREEN}CI passing and comments skipped.${RESET}"
+      echo ""
+      echo -e "${GREEN}╭─────────────────────────────────────────────────────────────╮${RESET}"
+      echo -e "${GREEN}│${RESET}  ${GREEN}${BOLD}✅ Monitor Complete${RESET} - PR ${MAGENTA}#$PR_NUM${RESET}"
+      echo -e "${GREEN}│${RESET}  ${DIM}Iterations: $iter | Exit: PR is clean${RESET}"
+      echo -e "${GREEN}╰─────────────────────────────────────────────────────────────╯${RESET}"
+      rm -f "$STATE_FILE" "$THREADS_FILE"
+      exit 0
+    fi
   fi
 
   # ═══════════════════════════════════════════════════════════════
   # STEP 3: Fetch and check for unresolved PR comments
   # ═══════════════════════════════════════════════════════════════
   echo ""
-  echo -e "${DIM}📝 Fetching PR comments...${RESET}"
+  if [ "$DO_COMMENTS" -eq 1 ]; then
+    echo -e "${DIM}📝 Fetching PR comments...${RESET}"
 
-  # Fetch all threads, filter to unresolved, save to file
-  current_count=$(fetch_threads)
-  current_ids=$(get_unresolved_thread_ids)
-  known_ids=$(get_known_ids)
+    # Fetch all threads, filter to unresolved, save to file
+    current_count=$(fetch_threads)
+    current_ids=$(get_unresolved_thread_ids)
+    known_ids=$(get_known_ids)
 
   # current_count is already set by fetch_threads
   # Ensure it's a valid number
   current_count=${current_count:-0}
 
-  # Check if PR is clean (no comments AND CI passing)
-  if [ "$current_count" -eq 0 ] && [ "$ci_status" = "success" ]; then
-    echo "@@STATUS:clean@@"
-    echo -e "${GREEN}${BOLD}✅ PR is clean!${RESET} ${GREEN}No unresolved comments and CI passing.${RESET}"
-    echo ""
-    echo -e "${GREEN}╭─────────────────────────────────────────────────────────────╮${RESET}"
-    echo -e "${GREEN}│${RESET}  ${GREEN}${BOLD}✅ Monitor Complete${RESET} - PR ${MAGENTA}#$PR_NUM${RESET}"
-    echo -e "${GREEN}│${RESET}  ${DIM}Iterations: $iter | Exit: PR is clean${RESET}"
-    echo -e "${GREEN}╰─────────────────────────────────────────────────────────────╯${RESET}"
-    rm -f "$STATE_FILE" "$THREADS_FILE"
-    exit 0
-  fi
+    # Check if PR is clean (no comments, and CI passing if enabled)
+    if [ "$current_count" -eq 0 ]; then
+      if [ "$DO_CI" -eq 1 ] && [ "$ci_status" != "success" ]; then
+        :
+      else
+        echo "@@STATUS:clean@@"
+        echo -e "${GREEN}${BOLD}✅ PR is clean!${RESET} ${GREEN}No unresolved comments.${RESET}"
+        echo ""
+        echo -e "${GREEN}╭─────────────────────────────────────────────────────────────╮${RESET}"
+        echo -e "${GREEN}│${RESET}  ${GREEN}${BOLD}✅ Monitor Complete${RESET} - PR ${MAGENTA}#$PR_NUM${RESET}"
+        echo -e "${GREEN}│${RESET}  ${DIM}Iterations: $iter | Exit: PR is clean${RESET}"
+        echo -e "${GREEN}╰─────────────────────────────────────────────────────────────╯${RESET}"
+        rm -f "$STATE_FILE" "$THREADS_FILE"
+        exit 0
+      fi
+    fi
 
   # Find new threads (not seen before)
   new_count=0
@@ -336,7 +388,7 @@ for iter in $(seq 1 $MAX_ITER); do
   # ═══════════════════════════════════════════════════════════════
   # STEP 4: Fix comments if any
   # ═══════════════════════════════════════════════════════════════
-  if [ "$current_count" -gt 0 ]; then
+    if [ "$current_count" -gt 0 ]; then
     echo -e "${YELLOW}📊 Unresolved: ${BOLD}$current_count${RESET}${YELLOW} comments | New: $new_count${RESET}"
     echo "@@COMMENTS_FOUND:$current_count@@"
     echo ""
@@ -358,8 +410,9 @@ for iter in $(seq 1 $MAX_ITER); do
 
     # Update state with current thread IDs
     update_state "$iter" "$current_ids"
-  else
-    echo -e "${GREEN}✅ No unresolved comments${RESET}"
+    else
+      echo -e "${GREEN}✅ No unresolved comments${RESET}"
+    fi
   fi
 
   # ═══════════════════════════════════════════════════════════════

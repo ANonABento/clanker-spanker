@@ -68,6 +68,41 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_monitors_pr_id ON monitors(pr_id);
         CREATE INDEX IF NOT EXISTS idx_monitors_repo ON monitors(repo);
 
+        -- job_runs: Track batch run executions (overnight runs)
+        CREATE TABLE IF NOT EXISTS job_runs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'running',
+            total_jobs INTEGER NOT NULL DEFAULT 0,
+            completed_jobs INTEGER NOT NULL DEFAULT 0,
+            failed_jobs INTEGER NOT NULL DEFAULT 0,
+            queued_jobs INTEGER NOT NULL DEFAULT 0,
+            running_jobs INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            ended_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs(status);
+
+        -- job_queue: Individual PR jobs within a run
+        CREATE TABLE IF NOT EXISTS job_queue (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES job_runs(id) ON DELETE CASCADE,
+            pr_id TEXT NOT NULL,
+            pr_number INTEGER NOT NULL,
+            repo TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            priority INTEGER NOT NULL DEFAULT 0,
+            monitor_id TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            started_at TEXT,
+            ended_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status);
+        CREATE INDEX IF NOT EXISTS idx_job_queue_run_id ON job_queue(run_id);
+        CREATE INDEX IF NOT EXISTS idx_job_queue_pr_id ON job_queue(pr_id);
+
         -- monitor_logs: Detailed log entries for each iteration
         CREATE TABLE IF NOT EXISTS monitor_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

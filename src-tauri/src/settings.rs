@@ -1,4 +1,5 @@
 use crate::db::{self, AppState};
+use crate::global_settings::{self, GlobalSettings};
 use tauri::State;
 
 /// Get all configured repositories
@@ -118,4 +119,30 @@ pub fn set_setting(
         .map_err(|e| format!("Failed to lock database: {}", e))?;
 
     db::set_setting(&conn, &key, &value).map_err(|e| format!("Database error: {}", e))
+}
+
+/// Get global settings (creates defaults if missing)
+#[tauri::command]
+pub fn get_global_settings(state: State<'_, AppState>) -> Result<GlobalSettings, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Failed to lock database: {}", e))?;
+
+    global_settings::ensure_global_settings(&conn)
+}
+
+/// Set global settings
+#[tauri::command]
+pub fn set_global_settings(
+    state: State<'_, AppState>,
+    settings: GlobalSettings,
+) -> Result<GlobalSettings, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Failed to lock database: {}", e))?;
+
+    global_settings::save_global_settings(&conn, &settings)?;
+    Ok(settings)
 }

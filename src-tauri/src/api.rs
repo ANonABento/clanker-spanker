@@ -3,6 +3,7 @@
 //! Listens on port 7890 and provides endpoints to start/stop monitors.
 
 use crate::db::AppState;
+use crate::global_settings;
 use crate::monitor;
 use serde::{Deserialize, Serialize};
 use std::thread;
@@ -442,7 +443,7 @@ fn handle_list_monitors<R: Runtime>(app: &AppHandle<R>) -> (i32, String) {
 }
 
 /// Internal function to start a monitor (mirrors monitor::start_monitor but without State wrapper)
-fn start_monitor_internal<R: Runtime>(
+pub(crate) fn start_monitor_internal<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
     pr_id: String,
@@ -455,8 +456,19 @@ fn start_monitor_internal<R: Runtime>(
     use uuid::Uuid;
 
     let id = Uuid::new_v4().to_string();
-    let max_iter = max_iterations.unwrap_or(10);
-    let interval = interval_minutes.unwrap_or(15);
+    let (max_iter, interval, pending_wait_minutes, steps) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| format!("Failed to lock database: {}", e))?;
+        let settings = global_settings::ensure_global_settings(&conn)?;
+        (
+            max_iterations.unwrap_or(settings.default_iterations),
+            interval_minutes.unwrap_or(settings.interval_minutes),
+            settings.pending_wait_minutes,
+            settings.steps,
+        )
+    };
     let now = Utc::now();
     let started_at = now.to_rfc3339();
     let next_check = (now + Duration::minutes(interval as i64)).to_rfc3339();
@@ -528,6 +540,8 @@ fn start_monitor_internal<R: Runtime>(
         &repo,
         max_iter,
         interval,
+        pending_wait_minutes,
+        &steps,
     )?;
 
     // Update the PID

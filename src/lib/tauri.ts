@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PR, Monitor, PRComment } from "./types";
+import type { PR, Monitor, PRComment, GlobalSettings } from "./types";
 
 /**
  * Safe invoke wrapper that handles errors gracefully
@@ -125,6 +125,20 @@ export async function getSetting(key: string): Promise<string | null> {
  */
 export async function setSetting(key: string, value: string): Promise<void> {
   return invoke<void>("set_setting", { key, value });
+}
+
+/**
+ * Get global settings
+ */
+export async function getGlobalSettings(): Promise<GlobalSettings> {
+  return invoke<GlobalSettings>("get_global_settings");
+}
+
+/**
+ * Set global settings
+ */
+export async function setGlobalSettings(settings: GlobalSettings): Promise<GlobalSettings> {
+  return invoke<GlobalSettings>("set_global_settings", { settings });
 }
 
 // ============ Monitor Commands ============

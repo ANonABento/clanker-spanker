@@ -1,5 +1,6 @@
 use crate::db::{self, AppState};
 use crate::dock;
+use crate::global_settings;
 use crate::sleep_prevention;
 use crate::tray;
 use chrono::{DateTime, Duration, Utc};
@@ -128,8 +129,19 @@ pub fn start_monitor(
     interval_minutes: Option<i32>,
 ) -> Result<Monitor, String> {
     let id = Uuid::new_v4().to_string();
-    let max_iter = max_iterations.unwrap_or(10);
-    let interval = interval_minutes.unwrap_or(15); // Default to 15 minutes
+    let (max_iter, interval, pending_wait_minutes, steps) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| format!("Failed to lock database: {}", e))?;
+        let settings = global_settings::ensure_global_settings(&conn)?;
+        (
+            max_iterations.unwrap_or(settings.default_iterations),
+            interval_minutes.unwrap_or(settings.interval_minutes),
+            settings.pending_wait_minutes,
+            settings.steps,
+        )
+    };
     let now: DateTime<Utc> = Utc::now();
     let started_at = now.to_rfc3339();
     let next_check = (now + Duration::minutes(interval as i64)).to_rfc3339();
@@ -201,6 +213,8 @@ pub fn start_monitor(
         &repo,
         max_iter,
         interval,
+        pending_wait_minutes,
+        &steps,
     )?;
 
     // Update the PID in the database

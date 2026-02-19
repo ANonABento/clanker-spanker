@@ -89,3 +89,32 @@ export interface Monitor {
   // Logs
   logFile: string;
 }
+
+export interface ScheduleSettings {
+  enabled: boolean;
+  days: string[];
+  time: string;
+  timezone: string;
+}
+
+export interface NotificationSettings {
+  onStart: boolean;
+  onComplete: boolean;
+  onFailure: boolean;
+}
+
+export interface GlobalSettings {
+  runner: "auto" | "codex" | "claude";
+  steps: "both" | "ci" | "comments";
+  autoStartDraftToOpen: boolean;
+  prScope: "all" | "involved";
+  schedule: ScheduleSettings;
+  defaultIterations: number;
+  intervalMinutes: number;
+  concurrencyCap: number;
+  maxJobsPerNight: number;
+  pendingWaitMinutes: number;
+  pushEnabled: boolean;
+  commitMessageTemplate: string;
+  notifications: NotificationSettings;
+}

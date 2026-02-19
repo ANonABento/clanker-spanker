@@ -5,8 +5,10 @@ extern crate objc;
 mod api;
 mod db;
 mod dock;
+mod global_settings;
 mod hotkey;
 mod monitor;
+mod orchestrator;
 mod notifications;
 mod process;
 mod settings;
@@ -101,27 +103,37 @@ fn parse_repo_path(input: &str) -> String {
 
 /// Fetch PRs from GitHub without DB access (pure network call)
 /// Used to avoid holding DB lock during network I/O
-fn fetch_prs_from_github(repo_path: &str, last_fetch: &Option<String>) -> Result<Vec<PR>, String> {
+fn fetch_prs_from_github(
+    repo_path: &str,
+    last_fetch: &Option<String>,
+    pr_scope: &str,
+) -> Result<Vec<PR>, String> {
     // Build search query with optional updated filter
-    let search_query = match last_fetch {
-        Some(ts) => format!("involves:@me updated:>={}", ts),
-        None => "involves:@me".to_string(),
+    // Note: fetch all open PRs by default (no involves:@me filter)
+    let search_query = match (pr_scope, last_fetch.as_ref()) {
+        ("involved", Some(ts)) => Some(format!("involves:@me updated:>={}", ts)),
+        ("involved", None) => Some("involves:@me".to_string()),
+        (_, Some(ts)) => Some(format!("updated:>={}", ts)),
+        _ => None,
     };
 
-    let args = vec![
-        "pr",
-        "list",
-        "--json",
-        "number,title,url,state,isDraft,author,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,mergeable,createdAt,updatedAt",
-        "--limit",
-        "50",
-        "--repo",
-        repo_path,
-        "--state",
-        "open",
-        "--search",
-        &search_query,
+    let mut args = vec![
+        "pr".to_string(),
+        "list".to_string(),
+        "--json".to_string(),
+        "number,title,url,state,isDraft,author,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,mergeable,createdAt,updatedAt".to_string(),
+        "--limit".to_string(),
+        "50".to_string(),
+        "--repo".to_string(),
+        repo_path.to_string(),
+        "--state".to_string(),
+        "open".to_string(),
     ];
+
+    if let Some(query) = search_query {
+        args.push("--search".to_string());
+        args.push(query);
+    }
 
     let output = Command::new("gh")
         .args(&args)
@@ -281,6 +293,7 @@ fn get_cached_prs_for_repo(conn: &rusqlite::Connection, repo: &str) -> Result<Ve
 /// Set force_refresh=true to bypass cache and fetch all PRs
 #[tauri::command]
 fn fetch_prs(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     repo: Option<String>,
     repos: Option<Vec<String>>,
@@ -307,9 +320,10 @@ fn fetch_prs(
     };
 
     // Phase 1: Get last_fetch timestamps (brief lock, release before network)
-    let fetch_metadata: Vec<(String, Option<String>)> = {
+    let (pr_scope, fetch_metadata): (String, Vec<(String, Option<String>)>) = {
         let conn = state.db.lock().map_err(|e| format!("DB lock error: {}", e))?;
-        repos_to_fetch
+        let settings = global_settings::ensure_global_settings(&conn)?;
+        let metadata = repos_to_fetch
             .iter()
             .map(|r| {
                 let repo_path = parse_repo_path(r);
@@ -320,13 +334,14 @@ fn fetch_prs(
                 };
                 (repo_path, last_fetch)
             })
-            .collect()
+            .collect::<Vec<_>>();
+        (settings.pr_scope, metadata)
     }; // Lock released here
 
     // Phase 2: Fetch from GitHub (NO lock held during network calls)
     let mut fetched_data: Vec<(String, Option<String>, Vec<PR>)> = Vec::new();
     for (repo_path, last_fetch) in fetch_metadata {
-        match fetch_prs_from_github(&repo_path, &last_fetch) {
+        match fetch_prs_from_github(&repo_path, &last_fetch, &pr_scope) {
             Ok(prs) => fetched_data.push((repo_path, last_fetch, prs)),
             Err(e) => {
                 eprintln!("Failed to fetch PRs from {}: {}", repo_path, e);
@@ -337,10 +352,29 @@ fn fetch_prs(
     // Phase 3: Save to database and collect results (re-acquire lock)
     let conn = state.db.lock().map_err(|e| format!("DB lock error: {}", e))?;
     let mut all_prs: Vec<PR> = Vec::new();
+    let mut auto_start_candidates: Vec<(String, i32, String)> = Vec::new();
+    let auto_start_enabled = global_settings::ensure_global_settings(&conn)
+        .map(|settings| settings.auto_start_draft_to_open)
+        .unwrap_or(false);
 
     for (repo_path, last_fetch, prs) in fetched_data {
         // Cache PRs in database
         for pr in &prs {
+            if auto_start_enabled {
+                let previous_is_draft: Option<bool> = conn
+                    .query_row(
+                        "SELECT is_draft FROM pr_cache WHERE id = ?1",
+                        [&pr.id],
+                        |row| row.get::<_, i32>(0),
+                    )
+                    .ok()
+                    .map(|value| value != 0);
+
+                if previous_is_draft == Some(true) && !pr.is_draft {
+                    auto_start_candidates.push((pr.id.clone(), pr.number, pr.repo.clone()));
+                }
+            }
+
             if let Err(e) = cache_pr(&conn, pr) {
                 eprintln!("Failed to cache PR: {}", e);
             }
@@ -380,6 +414,24 @@ fn fetch_prs(
         match get_cached_prs_for_repo(&conn, &repo_path) {
             Ok(cached) => all_prs.extend(cached),
             Err(e) => eprintln!("Failed to get cached PRs: {}", e),
+        }
+    }
+
+    drop(conn);
+
+    if auto_start_enabled {
+        for (pr_id, pr_number, repo) in auto_start_candidates {
+            if let Err(e) = monitor::start_monitor(
+                app.clone(),
+                state.clone(),
+                pr_id,
+                pr_number,
+                repo,
+                None,
+                None,
+            ) {
+                eprintln!("Failed to auto-start monitor: {}", e);
+            }
         }
     }
 
@@ -622,6 +674,9 @@ pub fn run() {
             // Start HTTP API server for external integrations (e.g., Claude Code)
             api::start_api_server(app.handle().clone());
 
+            // Start orchestrator for scheduled runs and queue dispatch
+            orchestrator::start_orchestrator(app.handle().clone());
+
             println!("Clanker Spanker initialized successfully");
 
             Ok(())
@@ -638,6 +693,10 @@ pub fn run() {
             settings::set_selected_repo,
             settings::get_setting,
             settings::set_setting,
+            settings::get_global_settings,
+            settings::set_global_settings,
+            orchestrator::start_overnight_run,
+            orchestrator::get_active_runs,
             monitor::start_monitor,
             monitor::stop_monitor,
             monitor::get_monitors,

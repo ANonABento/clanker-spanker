@@ -1,4 +1,5 @@
 use crate::db::{self, AppState};
+use crate::orchestrator;
 use crate::sleep_prevention;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -39,6 +40,8 @@ impl ProcessRegistry {
         repo: &str,
         max_iterations: i32,
         interval_minutes: i32,
+        pending_wait_minutes: i32,
+        steps: &str,
     ) -> Result<u32, String> {
         // Get the scripts directory path using dirs crate
         let app_data_dir = dirs::data_local_dir()
@@ -76,6 +79,8 @@ impl ProcessRegistry {
             .arg(repo)
             .arg(max_iterations.to_string())
             .arg(interval_minutes.to_string())
+            .arg(pending_wait_minutes.to_string())
+            .arg(steps)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -292,6 +297,8 @@ fn handle_process_exit<R: Runtime>(app: &AppHandle<R>, monitor_id: &str, pr_id: 
                 "UPDATE monitors SET status = ?1, ended_at = ?2, exit_reason = ?3 WHERE id = ?4 AND status IN ('running', 'sleeping')",
                 rusqlite::params![status, now, exit_reason, monitor_id],
             );
+
+            orchestrator::update_job_status(&conn, monitor_id, status, exit_reason);
 
             // Update sleep prevention state
             let sleep_enabled = db::get_setting_value(&conn, "sleep_prevention_enabled")
