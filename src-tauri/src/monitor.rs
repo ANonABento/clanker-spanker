@@ -130,6 +130,16 @@ pub fn start_monitor(
     let id = Uuid::new_v4().to_string();
     let max_iter = max_iterations.unwrap_or(10);
     let interval = interval_minutes.unwrap_or(15); // Default to 15 minutes
+    let (ai_provider, ai_model, dirty_worktree_policy, skip_ci_fix) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| format!("Failed to lock database: {}", e))?;
+        let (ai_provider, ai_model) = db::get_ai_config(&conn);
+        let dirty_worktree_policy = db::get_monitor_dirty_worktree_policy(&conn);
+        let skip_ci_fix = db::get_skip_ci_fix(&conn);
+        (ai_provider, ai_model, dirty_worktree_policy, skip_ci_fix)
+    };
     let now: DateTime<Utc> = Utc::now();
     let started_at = now.to_rfc3339();
     let next_check = (now + Duration::minutes(interval as i64)).to_rfc3339();
@@ -201,6 +211,10 @@ pub fn start_monitor(
         &repo,
         max_iter,
         interval,
+        &ai_provider,
+        ai_model.as_deref(),
+        &dirty_worktree_policy,
+        &skip_ci_fix,
     )?;
 
     // Update the PID in the database

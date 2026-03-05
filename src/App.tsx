@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Header } from "@/components/layout/Header";
@@ -183,8 +183,27 @@ function App() {
     };
   }, [allPRsFlat, setFocusedIndex]);
 
-  // Listen for terminal output events
+  // Listen for terminal output events (batched to reduce state churn)
+  const pendingLinesRef = useRef<Record<string, string[]>>({});
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
+    const flushLines = () => {
+      const pending = pendingLinesRef.current;
+      if (Object.keys(pending).length === 0) return;
+
+      pendingLinesRef.current = {};
+      flushTimerRef.current = null;
+
+      setTerminalOutputs((prev) => {
+        const next = { ...prev };
+        for (const [prId, lines] of Object.entries(pending)) {
+          next[prId] = [...(next[prId] || []), ...lines].slice(-100);
+        }
+        return next;
+      });
+    };
+
     const unlisten = listen<{ monitorId: string; prId: string; line: string }>(
       "monitor:output",
       (event) => {
@@ -195,15 +214,21 @@ function App() {
           return;
         }
 
-        setTerminalOutputs((prev) => ({
-          ...prev,
-          [prId]: [...(prev[prId] || []), line].slice(-100), // Keep last 100 lines
-        }));
+        // Buffer lines and flush every 100ms instead of updating state per-line
+        if (!pendingLinesRef.current[prId]) {
+          pendingLinesRef.current[prId] = [];
+        }
+        pendingLinesRef.current[prId].push(line);
+
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(flushLines, 100);
+        }
       }
     );
 
     return () => {
       unlisten.then((fn) => fn());
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     };
   }, []);
 
@@ -220,6 +245,15 @@ function App() {
             ...prev,
             [prId]: { monitorId, prNumber, iteration: iteration ?? 0, maxIterations: maxIterations ?? 0, exitReason },
           }));
+        }
+
+        // Clean up terminal output for completed monitor to free memory
+        if (prId) {
+          setTerminalOutputs((prev) => {
+            const next = { ...prev };
+            delete next[prId];
+            return next;
+          });
         }
 
         // Show toast notification

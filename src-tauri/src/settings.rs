@@ -1,4 +1,5 @@
 use crate::db::{self, AppState};
+use serde::Serialize;
 use tauri::State;
 
 /// Get all configured repositories
@@ -118,4 +119,110 @@ pub fn set_setting(
         .map_err(|e| format!("Failed to lock database: {}", e))?;
 
     db::set_setting(&conn, &key, &value).map_err(|e| format!("Database error: {}", e))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectiveAiModel {
+    pub provider: String,
+    pub model: String,
+    pub source: String, // override | provider_default | unknown
+}
+
+fn read_claude_default_model() -> Option<String> {
+    let path = dirs::home_dir()?.join(".claude").join("settings.json");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    json.get("model")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn read_codex_default_model() -> Option<String> {
+    let path = dirs::home_dir()?.join(".codex").join("config.toml");
+    let raw = std::fs::read_to_string(path).ok()?;
+
+    let mut table_name = String::new();
+    let mut root_model: Option<String> = None;
+    let mut profile_default_model: Option<String> = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed.starts_with('[') {
+            table_name = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim()
+                .to_string();
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "model" {
+            continue;
+        }
+
+        let value_no_comment = value.split('#').next().unwrap_or("").trim();
+        let parsed = value_no_comment
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim()
+            .to_string();
+        if parsed.is_empty() {
+            continue;
+        }
+
+        if table_name.is_empty() {
+            root_model = Some(parsed);
+        } else if table_name == "profiles.default" || table_name == "profile.default" {
+            profile_default_model = Some(parsed);
+        }
+    }
+
+    root_model.or(profile_default_model)
+}
+
+/// Get the effective AI provider/model currently used for new monitors.
+#[tauri::command]
+pub fn get_effective_ai_model(state: State<'_, AppState>) -> Result<EffectiveAiModel, String> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| format!("Failed to lock database: {}", e))?;
+
+    let (provider, override_model) = db::get_ai_config(&conn);
+    drop(conn);
+
+    if let Some(model) = override_model {
+        return Ok(EffectiveAiModel {
+            provider,
+            model,
+            source: "override".to_string(),
+        });
+    }
+
+    let default_model = match provider.as_str() {
+        "codex" => read_codex_default_model(),
+        _ => read_claude_default_model(),
+    };
+
+    match default_model {
+        Some(model) => Ok(EffectiveAiModel {
+            provider,
+            model,
+            source: "provider_default".to_string(),
+        }),
+        None => Ok(EffectiveAiModel {
+            provider,
+            model: "Unknown".to_string(),
+            source: "unknown".to_string(),
+        }),
+    }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, Sun, Moon, Power, Keyboard, Zap } from "lucide-react";
+import { X, Sun, Moon, Power, Keyboard, Zap, Bot, ShieldAlert } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
@@ -12,15 +12,51 @@ interface SettingsDialogProps {
   onThemeChange: (theme: Theme) => void;
 }
 
+interface EffectiveAiModel {
+  provider: string;
+  model: string;
+  source: "override" | "provider_default" | "unknown";
+}
+
 export function SettingsDialog({
   isOpen,
   onClose,
   theme,
   onThemeChange,
 }: SettingsDialogProps) {
+  const AI_PROVIDER_KEY = "ai_provider";
+  const AI_MODEL_CLAUDE_KEY = "ai_model_claude";
+  const AI_MODEL_CODEX_KEY = "ai_model_codex";
+  const MONITOR_DIRTY_WORKTREE_POLICY_KEY = "monitor_dirty_worktree_policy";
+  const SKIP_CI_FIX_KEY = "skip_ci_fix";
+
   const { isAutoStartEnabled, isLoading: isAutoStartLoading, toggleAutoStart } = useAutostart();
   const [sleepPreventionEnabled, setSleepPreventionEnabled] = useState(false);
   const [sleepPreventionLoading, setSleepPreventionLoading] = useState(false);
+  const [aiProvider, setAiProvider] = useState<"claude" | "codex">("claude");
+  const [aiModel, setAiModel] = useState("");
+  const [savedAiProvider, setSavedAiProvider] = useState<"claude" | "codex">("claude");
+  const [savedAiModel, setSavedAiModel] = useState("");
+  const [effectiveAiModel, setEffectiveAiModel] = useState<EffectiveAiModel | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [autoStashDirtyWorkspace, setAutoStashDirtyWorkspace] = useState(false);
+  const [workspacePolicyLoading, setWorkspacePolicyLoading] = useState(false);
+  const [skipCiFix, setSkipCiFix] = useState(false);
+  const [skipCiFixLoading, setSkipCiFixLoading] = useState(false);
+
+  const getModelKey = (provider: "claude" | "codex") =>
+    provider === "codex" ? AI_MODEL_CODEX_KEY : AI_MODEL_CLAUDE_KEY;
+
+  const loadEffectiveAiModel = async () => {
+    try {
+      const result = await invoke<EffectiveAiModel>("get_effective_ai_model");
+      setEffectiveAiModel(result);
+    } catch (error) {
+      console.error("Failed to load effective AI model:", error);
+      setEffectiveAiModel(null);
+    }
+  };
 
   // Load sleep prevention setting
   useEffect(() => {
@@ -28,6 +64,61 @@ export function SettingsDialog({
     invoke<string | null>("get_setting", { key: "sleep_prevention_enabled" })
       .then((value) => setSleepPreventionEnabled(value === "true"))
       .catch(console.error);
+  }, [isOpen]);
+
+  // Load AI settings
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const loadAISettings = async () => {
+      setAiLoading(true);
+      try {
+        const providerRaw = await invoke<string | null>("get_setting", {
+          key: AI_PROVIDER_KEY,
+        });
+        const provider: "claude" | "codex" = providerRaw === "codex" ? "codex" : "claude";
+        setAiProvider(provider);
+        setSavedAiProvider(provider);
+
+        const modelRaw = await invoke<string | null>("get_setting", {
+          key: getModelKey(provider),
+        });
+        const model = modelRaw ?? "";
+        setAiModel(model);
+        setSavedAiModel(model);
+        await loadEffectiveAiModel();
+      } catch (error) {
+        console.error("Failed to load AI settings:", error);
+      } finally {
+        setAiLoading(false);
+      }
+    };
+
+    loadAISettings();
+  }, [isOpen]);
+
+  // Load monitor workspace policy setting
+  useEffect(() => {
+    if (!isOpen) return;
+    setWorkspacePolicyLoading(true);
+    invoke<string | null>("get_setting", { key: MONITOR_DIRTY_WORKTREE_POLICY_KEY })
+      .then((value) => setAutoStashDirtyWorkspace((value ?? "abort") === "stash"))
+      .catch((error) => {
+        console.error("Failed to load monitor workspace policy:", error);
+      })
+      .finally(() => setWorkspacePolicyLoading(false));
+  }, [isOpen]);
+
+  // Load skip CI fix setting
+  useEffect(() => {
+    if (!isOpen) return;
+    setSkipCiFixLoading(true);
+    invoke<string | null>("get_setting", { key: SKIP_CI_FIX_KEY })
+      .then((value) => setSkipCiFix(value === "true"))
+      .catch((error) => {
+        console.error("Failed to load skip CI fix setting:", error);
+      })
+      .finally(() => setSkipCiFixLoading(false));
   }, [isOpen]);
 
   const toggleSleepPrevention = async () => {
@@ -47,6 +138,95 @@ export function SettingsDialog({
       setSleepPreventionLoading(false);
     }
   };
+
+  const handleAIProviderChange = async (provider: "claude" | "codex") => {
+    setAiSaving(true);
+    try {
+      await invoke("set_setting", { key: AI_PROVIDER_KEY, value: provider });
+
+      // Load model for the selected provider so users can keep distinct defaults.
+      const modelRaw = await invoke<string | null>("get_setting", {
+        key: getModelKey(provider),
+      });
+      const model = modelRaw ?? "";
+      setAiProvider(provider);
+      setSavedAiProvider(provider);
+      setAiModel(model);
+      setSavedAiModel(model);
+      await loadEffectiveAiModel();
+    } catch (error) {
+      console.error("Failed to update AI provider:", error);
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const saveAIModel = async () => {
+    setAiSaving(true);
+    try {
+      const normalizedModel = aiModel.trim();
+      await invoke("set_setting", {
+        key: getModelKey(aiProvider),
+        value: normalizedModel,
+      });
+      setAiModel(normalizedModel);
+      setSavedAiModel(normalizedModel);
+      await loadEffectiveAiModel();
+    } catch (error) {
+      console.error("Failed to save AI model:", error);
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const toggleAutoStashDirtyWorkspace = async () => {
+    setWorkspacePolicyLoading(true);
+    try {
+      const nextValue = !autoStashDirtyWorkspace;
+      await invoke("set_setting", {
+        key: MONITOR_DIRTY_WORKTREE_POLICY_KEY,
+        value: nextValue ? "stash" : "abort",
+      });
+      setAutoStashDirtyWorkspace(nextValue);
+    } catch (error) {
+      console.error("Failed to save monitor workspace policy:", error);
+    } finally {
+      setWorkspacePolicyLoading(false);
+    }
+  };
+
+  const toggleSkipCiFix = async () => {
+    setSkipCiFixLoading(true);
+    try {
+      const nextValue = !skipCiFix;
+      await invoke("set_setting", {
+        key: SKIP_CI_FIX_KEY,
+        value: nextValue ? "true" : "false",
+      });
+      setSkipCiFix(nextValue);
+    } catch (error) {
+      console.error("Failed to save skip CI fix setting:", error);
+    } finally {
+      setSkipCiFixLoading(false);
+    }
+  };
+
+  const hasUnsavedModelChanges = aiModel.trim() !== savedAiModel;
+  const currentProviderLabel = effectiveAiModel
+    ? effectiveAiModel.provider === "codex"
+      ? "Codex"
+      : "Claude"
+    : savedAiProvider === "codex"
+      ? "Codex"
+      : "Claude";
+  const currentModelLabel = effectiveAiModel?.model ?? "Unknown";
+  const currentModelSourceLabel = effectiveAiModel?.source === "override"
+    ? "saved in app settings"
+    : effectiveAiModel?.source === "provider_default"
+      ? effectiveAiModel?.provider === "codex"
+        ? "from ~/.codex/config.toml"
+        : "from ~/.claude/settings.json"
+      : "not detected";
 
   // Close on Escape key
   useEffect(() => {
@@ -164,6 +344,113 @@ export function SettingsDialog({
               >
                 {sleepPreventionEnabled ? "Enabled" : "Disabled"}
               </Button>
+            </div>
+          </section>
+
+          {/* AI Section */}
+          <section>
+            <h3 className="text-sm font-medium text-text-primary mb-3">
+              AI
+            </h3>
+            <div className="space-y-3 p-3 rounded-lg bg-surface-secondary border border-border">
+              <div className="flex items-center gap-3">
+                <Bot className="h-4 w-4 text-text-secondary" />
+                <div className="flex-1">
+                  <p className="text-sm text-text-primary">Provider</p>
+                  <p className="text-xs text-text-tertiary">
+                    Select the CLI used for monitor automation
+                  </p>
+                </div>
+                <select
+                  value={aiProvider}
+                  onChange={(e) => handleAIProviderChange(e.target.value as "claude" | "codex")}
+                  disabled={aiLoading || aiSaving}
+                  className="px-2 py-1.5 text-sm rounded-md bg-surface border border-border text-text-primary focus:outline-none focus:ring-1 focus:ring-border"
+                >
+                  <option value="claude">Claude</option>
+                  <option value="codex">Codex</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  placeholder={
+                    aiProvider === "codex"
+                      ? "Model (optional, e.g. gpt-5)"
+                      : "Model (optional, e.g. sonnet)"
+                  }
+                  disabled={aiLoading || aiSaving}
+                  className="flex-1 px-3 py-1.5 text-sm rounded-md bg-surface border border-border text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-1 focus:ring-border"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={saveAIModel}
+                  disabled={aiLoading || aiSaving}
+                >
+                  Save
+                </Button>
+              </div>
+
+              <div className="rounded-md border border-border bg-surface p-2">
+                <p className="text-xs text-text-tertiary">Currently used for new monitors</p>
+                <p className="text-sm text-text-primary">
+                  Provider: <span className="font-medium">{currentProviderLabel}</span>
+                </p>
+                <p className="text-sm text-text-primary">
+                  Model: <span className="font-medium">{currentModelLabel}</span>{" "}
+                  <span className="text-xs text-text-tertiary">({currentModelSourceLabel})</span>
+                </p>
+                {hasUnsavedModelChanges && (
+                  <p className="text-xs text-text-tertiary">
+                    Model edits apply after clicking Save.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between rounded-md border border-border bg-surface p-2">
+                <div className="flex items-center gap-3">
+                  <ShieldAlert className="h-4 w-4 text-text-secondary" />
+                  <div>
+                    <p className="text-sm text-text-primary">Auto-stash dirty workspace</p>
+                    <p className="text-xs text-text-tertiary">
+                      If disabled, monitors stop when git state changes unexpectedly.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant={autoStashDirtyWorkspace ? "default" : "outline"}
+                  size="sm"
+                  onClick={toggleAutoStashDirtyWorkspace}
+                  disabled={workspacePolicyLoading}
+                >
+                  {autoStashDirtyWorkspace ? "Stash" : "Abort"}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <ShieldAlert className="h-4 w-4 text-text-secondary" />
+                  <div>
+                    <p className="text-sm text-text-primary">CI failure handling</p>
+                    <p className="text-xs text-text-tertiary">
+                      {skipCiFix
+                        ? "Currently ignoring CI failures"
+                        : "Will attempt to fix CI failures"}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleSkipCiFix}
+                  disabled={skipCiFixLoading}
+                  className={skipCiFix ? "text-yellow-500 border-yellow-500/50" : ""}
+                >
+                  {skipCiFix ? "Ignoring CI" : "Fixing CI"}
+                </Button>
+              </div>
             </div>
           </section>
 

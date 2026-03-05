@@ -165,8 +165,9 @@ fn handle_start_monitor<R: Runtime>(
         req.interval_minutes,
     ) {
         Ok(monitor) => {
-            // Emit event to refresh frontend
-            let _ = app.emit("pr:refresh", ());
+            // PR is already cached by fetch_and_cache_pr above — no need to
+            // emit pr:refresh which triggers a full forceRefresh fetch and
+            // burns GraphQL rate limit on stale-PR checks.
             (200, ApiResponse::success(monitor))
         }
         Err(e) => (400, ApiResponse::<()>::error(&e)),
@@ -457,6 +458,16 @@ fn start_monitor_internal<R: Runtime>(
     let id = Uuid::new_v4().to_string();
     let max_iter = max_iterations.unwrap_or(10);
     let interval = interval_minutes.unwrap_or(15);
+    let (ai_provider, ai_model, dirty_worktree_policy, skip_ci_fix) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| format!("Failed to lock database: {}", e))?;
+        let (ai_provider, ai_model) = crate::db::get_ai_config(&conn);
+        let dirty_worktree_policy = crate::db::get_monitor_dirty_worktree_policy(&conn);
+        let skip_ci_fix = crate::db::get_skip_ci_fix(&conn);
+        (ai_provider, ai_model, dirty_worktree_policy, skip_ci_fix)
+    };
     let now = Utc::now();
     let started_at = now.to_rfc3339();
     let next_check = (now + Duration::minutes(interval as i64)).to_rfc3339();
@@ -528,6 +539,10 @@ fn start_monitor_internal<R: Runtime>(
         &repo,
         max_iter,
         interval,
+        &ai_provider,
+        ai_model.as_deref(),
+        &dirty_worktree_policy,
+        &skip_ci_fix,
     )?;
 
     // Update the PID
