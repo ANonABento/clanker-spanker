@@ -1,6 +1,6 @@
 # 🤖 Clanker Spanker 👋
 
-A macOS desktop app that monitors your GitHub pull requests and automatically fixes CI failures and code review comments using Claude AI.
+A macOS desktop app that monitors your GitHub pull requests and automatically fixes CI failures and code review comments using Claude or Codex AI.
 
 Built with Tauri 2 + React + TypeScript.
 
@@ -12,7 +12,7 @@ Built with Tauri 2 + React + TypeScript.
 ## What It Does
 
 1. **Shows your open PRs** in a card grid with CI status, review status, labels, and comment counts
-2. **Monitors PRs** on a loop — checks CI, fetches review threads, and invokes Claude to fix issues automatically
+2. **Monitors PRs** on a loop — checks CI, fetches review threads, and invokes your selected AI provider to fix issues automatically
 3. **Tracks progress** with live terminal output, progress bars, and iteration counters
 4. **Persists state** — merged PRs stay visible until dismissed, monitor history is retained
 
@@ -24,13 +24,15 @@ Built with Tauri 2 + React + TypeScript.
 | [Rust](https://rustup.rs/) | Tauri backend | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | [GitHub CLI](https://cli.github.com/) | PR data & GraphQL API | `brew install gh` |
 | [jq](https://jqlang.github.io/jq/) | JSON processing in monitor script | `brew install jq` |
-| [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) | AI-powered fixes | `npm install -g @anthropic-ai/claude-code` |
+| [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) | AI-powered fixes (Claude provider) | `npm install -g @anthropic-ai/claude-code` |
+| [Codex CLI](https://github.com/openai/codex) | AI-powered fixes (Codex provider) | install per Codex CLI docs |
 
 After installing, authenticate both tools:
 
 ```bash
 gh auth login          # GitHub CLI — select HTTPS, authenticate via browser
 claude                 # Claude CLI — follow the setup prompts to link your account
+codex login            # Codex CLI authentication (if using Codex provider)
 ```
 
 ## Setup
@@ -41,14 +43,14 @@ cd clanker-spanker
 npm install
 ```
 
-### Claude CLI Skills
+### AI Provider Setup
 
-The monitor loop depends on two Claude CLI skill files in `~/.claude/commands/`:
+If you use the **Claude** provider, the monitor loop depends on two Claude CLI skill files in `~/.claude/commands/`:
 
 - **`handle-pr-comments.md`** — Categorizes and fixes unresolved review threads
 - **`fix-ci.md`** — Reads CI failure logs and applies fixes
 
-These are custom prompt files, not built into Claude CLI. You need to create them or get them from whoever shared this repo. Place them at:
+These are custom prompt files, not built into Claude CLI. Place them at:
 
 ```
 ~/.claude/commands/handle-pr-comments.md
@@ -56,6 +58,8 @@ These are custom prompt files, not built into Claude CLI. You need to create the
 ```
 
 Without these files, the monitor will still run its loop but skip the AI fix steps (it logs a warning and continues).
+
+If you use the **Codex** provider, no Claude skill files are required.
 
 ### Local Repo Clone
 
@@ -94,9 +98,9 @@ Click **"Select repository..."** in the header bar. Paste a full GitHub URL (`ht
 Click the **Monitor** button on any PR card. This starts the monitor loop:
 
 1. Check CI status (waits up to 15 min if pending)
-2. If CI is failing, invoke `/fix-ci` via Claude to fix it
+2. If CI is failing, run provider-specific CI-fix flow
 3. Fetch all review threads via GraphQL (with pagination)
-4. If unresolved comments exist, invoke `/handle-pr-comments` via Claude to categorize and fix them
+4. If unresolved comments exist, run provider-specific comment-handling flow
 5. Sleep for the configured interval (default: 15 minutes)
 6. Repeat until PR is clean or max iterations reached (default: 10)
 
@@ -148,6 +152,8 @@ Click the gear icon in the header:
 | **Theme** | Dark or Light mode |
 | **Start on login** | Auto-launch at macOS login |
 | **Prevent sleep** | Keep Mac awake while any monitor is active |
+| **AI provider** | Choose Claude or Codex for monitor automation |
+| **Model** | Optional provider-specific model override |
 
 Monitor defaults (max iterations = 10, interval = 15 min) are currently hardcoded. To change them per-monitor, use the API (see below). To change the defaults globally, edit `src-tauri/src/monitor.rs`.
 
@@ -255,9 +261,14 @@ The frontend and core Tauri logic are cross-platform, but the Rust backend would
 - Verify `claude` is in PATH: `which claude`
 - Check the monitor terminal output for error messages
 
-**Claude skills not found**
+**Claude skills not found (Claude provider only)**
 - Verify: `ls ~/.claude/commands/handle-pr-comments.md ~/.claude/commands/fix-ci.md`
 - Without these, the monitor logs a warning and skips the fix step
+
+**Selected AI CLI not found**
+- If provider is Claude, verify: `which claude`
+- If provider is Codex, verify: `which codex`
+- The monitor logs a warning and continues looping
 
 **No local repo clone found**
 - The monitor terminal will show "Warning: Could not find local clone of owner/repo"
@@ -276,4 +287,4 @@ The frontend and core Tauri logic are cross-platform, but the Rust backend would
 - **Frontend**: React 19, TypeScript 5.8, Tailwind CSS 4, Vite 7, xterm.js, dnd-kit
 - **Backend**: Rust, Tauri 2, SQLite (rusqlite), tiny-http, Chrono
 - **Platform**: macOS (IOKit, Cocoa, NSApplication)
-- **AI**: Claude CLI with custom skills (`/handle-pr-comments`, `/fix-ci`)
+- **AI**: Claude CLI (with custom skills) or Codex CLI

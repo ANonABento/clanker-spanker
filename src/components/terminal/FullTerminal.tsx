@@ -24,6 +24,8 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
   const lastOutputLengthRef = useRef(0);
   const inputBufferRef = useRef("");
   const userScrolledRef = useRef(false);
+  const onInputRef = useRef(onInput);
+  onInputRef.current = onInput;
 
   // Initialize terminal
   useEffect(() => {
@@ -55,7 +57,7 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
         brightCyan: "#22d3ee",
         brightWhite: "#ffffff",
       },
-      scrollback: 1000,
+      scrollback: 500,
       cursorBlink: true,
       cursorStyle: "bar",
     });
@@ -77,8 +79,8 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
     terminal.onData((data) => {
       if (data === "\r") {
         // Enter pressed - send input
-        if (inputBufferRef.current && onInput) {
-          onInput(inputBufferRef.current);
+        if (inputBufferRef.current && onInputRef.current) {
+          onInputRef.current(inputBufferRef.current);
         }
         terminal.write("\r\n");
         inputBufferRef.current = "";
@@ -117,7 +119,8 @@ export function FullTerminal({ output, onInput, className = "" }: FullTerminalPr
     return () => {
       terminal.dispose();
     };
-  }, [onInput]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Don't recreate terminal when onInput changes - use ref instead
 
   // Write new output lines (preserving user scroll position)
   useEffect(() => {

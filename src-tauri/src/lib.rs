@@ -354,20 +354,19 @@ fn fetch_prs(
 
         // Check for merged/closed PRs on full refresh
         // Instead of deleting, update their state so they show in "done" category
+        // Uses a single batched GraphQL query instead of one per PR
         if last_fetch.is_none() {
             let active_ids: Vec<String> = prs.iter().map(|pr| pr.id.clone()).collect();
             match db::get_stale_pr_ids(&conn, &repo_path, &active_ids) {
                 Ok(stale_prs) if !stale_prs.is_empty() => {
-                    println!("Found {} potentially merged/closed PRs, checking status...", stale_prs.len());
-                    for (pr_id, pr_number) in stale_prs {
-                        // Check PR state via GitHub API
-                        if let Some((state, _)) = check_pr_state(&repo_path, pr_number) {
-                            let category = determine_category(&state, false);
-                            if let Err(e) = db::update_pr_state(&conn, &pr_id, &state, &category) {
-                                eprintln!("Failed to update PR state: {}", e);
-                            } else {
-                                println!("Updated PR #{} to state: {} (category: {})", pr_number, state, category);
-                            }
+                    println!("Found {} potentially merged/closed PRs, batch-checking status...", stale_prs.len());
+                    let results = batch_check_pr_states(&repo_path, &stale_prs);
+                    for (pr_id, pr_number, state, _) in results {
+                        let category = determine_category(&state, false);
+                        if let Err(e) = db::update_pr_state(&conn, &pr_id, &state, &category) {
+                            eprintln!("Failed to update PR state: {}", e);
+                        } else {
+                            println!("Updated PR #{} to state: {} (category: {})", pr_number, state, category);
                         }
                     }
                 }
@@ -532,6 +531,68 @@ fn check_pr_state(repo: &str, pr_number: i32) -> Option<(String, Option<String>)
     Some((state, merged_at))
 }
 
+/// Check the state of multiple PRs in a single GraphQL query.
+/// Returns a map of pr_number -> (state, merged_at).
+/// Falls back to individual queries if the batch fails.
+fn batch_check_pr_states(repo: &str, pr_numbers: &[(String, i32)]) -> Vec<(String, i32, String, Option<String>)> {
+    if pr_numbers.is_empty() {
+        return vec![];
+    }
+
+    // Build a batched GraphQL query: one alias per PR
+    let parts: Vec<&str> = repo.splitn(2, '/').collect();
+    if parts.len() != 2 {
+        // Fallback to individual queries
+        return pr_numbers.iter().filter_map(|(pr_id, num)| {
+            check_pr_state(repo, *num).map(|(state, merged_at)| (pr_id.clone(), *num, state, merged_at))
+        }).collect();
+    }
+    let (owner, name) = (parts[0], parts[1]);
+
+    let aliases: Vec<String> = pr_numbers.iter().map(|(_, num)| {
+        format!(
+            "pr{num}: pullRequest(number: {num}) {{ state mergedAt }}",
+            num = num
+        )
+    }).collect();
+
+    let query = format!(
+        "query {{ repository(owner: \"{owner}\", name: \"{name}\") {{ {aliases} }} }}",
+        owner = owner,
+        name = name,
+        aliases = aliases.join(" ")
+    );
+
+    let output = Command::new("gh")
+        .args(["api", "graphql", "-f", &format!("query={}", query)])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                let repo_data = &json["data"]["repository"];
+                return pr_numbers.iter().filter_map(|(pr_id, num)| {
+                    let pr_data = &repo_data[format!("pr{}", num)];
+                    let state = pr_data["state"].as_str()?.to_lowercase();
+                    let merged_at = pr_data["mergedAt"].as_str().map(|s| s.to_string());
+                    Some((pr_id.clone(), *num, state, merged_at))
+                }).collect();
+            }
+            // JSON parse failed, fallback
+            pr_numbers.iter().filter_map(|(pr_id, num)| {
+                check_pr_state(repo, *num).map(|(state, merged_at)| (pr_id.clone(), *num, state, merged_at))
+            }).collect()
+        }
+        _ => {
+            // gh command failed, fallback to individual queries
+            pr_numbers.iter().filter_map(|(pr_id, num)| {
+                check_pr_state(repo, *num).map(|(state, merged_at)| (pr_id.clone(), *num, state, merged_at))
+            }).collect()
+        }
+    }
+}
+
 fn determine_category(state: &str, is_monitoring: bool) -> String {
     if is_monitoring {
         return "monitoring".to_string();
@@ -588,10 +649,21 @@ pub fn run() {
             let db_path = db::get_db_path().expect("Failed to get database path");
             let state = AppState::new(db_path).expect("Failed to initialize database");
 
-            // Initialize schema
+            // Initialize schema and clean up old data
             {
                 let conn = state.db.lock().unwrap();
                 db::init_schema(&conn).expect("Failed to initialize database schema");
+
+                // Clean up old completed/failed monitors (keep last 50)
+                if let Err(e) = db::cleanup_old_monitors(&conn) {
+                    eprintln!("Failed to clean up old monitors: {}", e);
+                }
+
+                // Mark any "running" monitors from a previous crash as failed
+                let _ = conn.execute(
+                    "UPDATE monitors SET status = 'failed', exit_reason = 'app_restart', ended_at = datetime('now') WHERE status IN ('running', 'sleeping')",
+                    [],
+                );
             }
 
             // Store state for use in commands
@@ -638,6 +710,7 @@ pub fn run() {
             settings::set_selected_repo,
             settings::get_setting,
             settings::set_setting,
+            settings::get_effective_ai_model,
             monitor::start_monitor,
             monitor::stop_monitor,
             monitor::get_monitors,

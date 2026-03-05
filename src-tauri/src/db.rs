@@ -3,6 +3,12 @@ use rusqlite::{Connection, Result as SqliteResult};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+pub const AI_PROVIDER_SETTING_KEY: &str = "ai_provider";
+pub const AI_MODEL_CLAUDE_SETTING_KEY: &str = "ai_model_claude";
+pub const AI_MODEL_CODEX_SETTING_KEY: &str = "ai_model_codex";
+pub const MONITOR_DIRTY_WORKTREE_POLICY_SETTING_KEY: &str = "monitor_dirty_worktree_policy";
+pub const SKIP_CI_FIX_SETTING_KEY: &str = "skip_ci_fix";
+
 /// Application state holding the database connection and process registry
 pub struct AppState {
     pub db: Mutex<Connection>,
@@ -14,9 +20,14 @@ impl AppState {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        // Enable foreign keys
-        conn.execute_batch("PRAGMA foreign_keys = ON;")
-            .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
+        // SQLite performance and memory settings
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA journal_mode = WAL;
+             PRAGMA cache_size = -2000;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA busy_timeout = 5000;"
+        ).map_err(|e| format!("Failed to set database pragmas: {}", e))?;
 
         Ok(Self {
             db: Mutex::new(conn),
@@ -95,7 +106,11 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
         INSERT OR IGNORE INTO settings (key, value) VALUES
             ('selected_repo', ''),
             ('default_max_iterations', '10'),
-            ('default_interval_minutes', '15');
+            ('default_interval_minutes', '15'),
+            ('ai_provider', 'claude'),
+            ('ai_model_claude', ''),
+            ('ai_model_codex', ''),
+            ('monitor_dirty_worktree_policy', 'abort');
 
         -- pr_cache: Cached PR metadata for incremental fetching
         CREATE TABLE IF NOT EXISTS pr_cache (
@@ -158,6 +173,16 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
     )
 }
 
+/// Clean up old completed/failed monitor records (keep last 50)
+pub fn cleanup_old_monitors(conn: &Connection) -> SqliteResult<usize> {
+    conn.execute(
+        "DELETE FROM monitors WHERE id NOT IN (
+            SELECT id FROM monitors ORDER BY created_at DESC LIMIT 50
+        ) AND status IN ('completed', 'failed', 'stopped')",
+        [],
+    )
+}
+
 /// Get a setting value
 pub fn get_setting(conn: &Connection, key: &str) -> SqliteResult<Option<String>> {
     let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
@@ -182,6 +207,61 @@ pub fn set_setting(conn: &Connection, key: &str, value: &str) -> SqliteResult<()
         [key, value],
     )?;
     Ok(())
+}
+
+/// Resolve AI provider/model settings with safe defaults.
+pub fn get_ai_config(conn: &Connection) -> (String, Option<String>) {
+    let provider_raw = get_setting_value(conn, AI_PROVIDER_SETTING_KEY)
+        .unwrap_or_else(|| "claude".to_string())
+        .trim()
+        .to_lowercase();
+
+    let provider = if provider_raw == "codex" {
+        "codex".to_string()
+    } else {
+        "claude".to_string()
+    };
+
+    let model_key = if provider == "codex" {
+        AI_MODEL_CODEX_SETTING_KEY
+    } else {
+        AI_MODEL_CLAUDE_SETTING_KEY
+    };
+
+    let model = get_setting_value(conn, model_key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    (provider, model)
+}
+
+/// Resolve monitor dirty-worktree policy with a safe default.
+/// Valid values: "abort" | "stash"
+pub fn get_monitor_dirty_worktree_policy(conn: &Connection) -> String {
+    let raw = get_setting_value(conn, MONITOR_DIRTY_WORKTREE_POLICY_SETTING_KEY)
+        .unwrap_or_else(|| "abort".to_string())
+        .trim()
+        .to_lowercase();
+
+    if raw == "stash" {
+        "stash".to_string()
+    } else {
+        "abort".to_string()
+    }
+}
+
+/// Get skip_ci_fix setting. Returns "true" or "false".
+pub fn get_skip_ci_fix(conn: &Connection) -> String {
+    let raw = get_setting_value(conn, SKIP_CI_FIX_SETTING_KEY)
+        .unwrap_or_else(|| "false".to_string())
+        .trim()
+        .to_lowercase();
+
+    if raw == "true" || raw == "1" {
+        "true".to_string()
+    } else {
+        "false".to_string()
+    }
 }
 
 /// Get the last fetch time for a repo
