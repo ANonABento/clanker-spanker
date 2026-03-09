@@ -198,17 +198,19 @@ fn enqueue_run<R: Runtime>(
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-        stmt.query_map([max_jobs], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i32>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i32>(3)?,
-            ))
-        })
-        .map_err(|e| format!("Failed to query PRs: {}", e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to read PR rows: {}", e))?
+        let result = stmt
+            .query_map([max_jobs], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i32>(3)?,
+                ))
+            })
+            .map_err(|e| format!("Failed to query PRs: {}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read PR rows: {}", e))?;
+        result
     };
 
     let mut queued = 0;
@@ -286,18 +288,20 @@ fn dispatch_jobs<R: Runtime>(app: &AppHandle<R>, state: &AppState) -> Result<(),
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-        stmt.query_map([available_slots as i64], |row| {
-            Ok(JobRow {
-                id: row.get(0)?,
-                run_id: row.get(1)?,
-                pr_id: row.get(2)?,
-                pr_number: row.get(3)?,
-                repo: row.get(4)?,
+        let result = stmt
+            .query_map([available_slots as i64], |row| {
+                Ok(JobRow {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    pr_id: row.get(2)?,
+                    pr_number: row.get(3)?,
+                    repo: row.get(4)?,
+                })
             })
-        })
-        .map_err(|e| format!("Failed to query jobs: {}", e))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("Failed to read jobs: {}", e))?
+            .map_err(|e| format!("Failed to query jobs: {}", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read jobs: {}", e))?;
+        result
     };
 
     drop(conn);
