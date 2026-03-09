@@ -493,6 +493,7 @@ dependencies = [
  "core-foundation",
  "dirs 5.0.1",
  "dispatch",
+ "libc",
  "objc",
  "rusqlite",
  "serde",

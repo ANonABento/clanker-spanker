@@ -1,4 +1,4 @@
-import { MessageSquare, Maximize2, Check } from "lucide-react";
+import { MessageSquare, Maximize2, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime, formatCountdown } from "@/lib/time";
 import { MiniTerminal } from "@/components/terminal/MiniTerminal";
@@ -63,6 +63,11 @@ export function PRCard({
             Merged
           </span>
         )}
+        {!isMonitoring && pr.state === "closed" && (
+          <span className="text-xs px-2 py-0.5 rounded bg-red-500/15 text-red-400 font-medium">
+            Closed
+          </span>
+        )}
         {!isMonitoring && pr.state !== "merged" && hasCompletedMonitor && (
           <span className="text-xs px-2 py-0.5 rounded bg-[#1a1a1a] text-[#707070] font-medium">
             Logged
@@ -97,7 +102,7 @@ export function PRCard({
         "hover:border-[#333] hover:bg-[#141414] hover:shadow-[0_4px_16px_rgba(139,92,246,0.1)] hover:translate-y-[-1px]",
         "transition-all duration-200 ease-out",
         isFocused && "ring-2 ring-[#8b5cf6]/50 ring-offset-2 ring-offset-[#0a0a0a]",
-        pr.state === "merged" && "opacity-80 hover:opacity-100"
+        (pr.state === "merged" || pr.state === "closed") && "opacity-80 hover:opacity-100"
       )}
     >
       {/* Clickable Header Area - opens GitHub */}
@@ -129,6 +134,11 @@ export function PRCard({
                 <Check className="h-3 w-3" />
                 Merged
               </span>
+            ) : pr.state === "closed" ? (
+              <span className="flex items-center gap-1 text-red-400 bg-red-500/15 px-2 py-0.5 rounded font-medium text-xs">
+                <X className="h-3 w-3" />
+                Closed
+              </span>
             ) : (
               <>
                 <StatusBadge status={pr.ciStatus} type="ci" />
@@ -142,7 +152,7 @@ export function PRCard({
         <p
           className={cn(
             "text-sm line-clamp-2 leading-snug min-h-[2.625rem]",
-            pr.state === "merged" ? "text-[#707070]" : "text-[#a0a0a0]"
+            (pr.state === "merged" || pr.state === "closed") ? "text-[#707070]" : "text-[#a0a0a0]"
           )}
           title={pr.title}
         >
@@ -215,13 +225,18 @@ export function PRCard({
             Monitor
           </button>
         )}
-        {pr.state === "merged" && onDismiss && (
+        {(pr.state === "merged" || pr.state === "closed") && onDismiss && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               onDismiss(pr);
             }}
-            className="flex-1 text-xs py-1.5 rounded bg-emerald-500/20 text-emerald-400 font-medium hover:bg-emerald-500/30 transition-colors"
+            className={cn(
+              "flex-1 text-xs py-1.5 rounded font-medium transition-colors",
+              pr.state === "merged"
+                ? "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
+                : "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+            )}
           >
             Dismiss
           </button>

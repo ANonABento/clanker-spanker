@@ -10,6 +10,21 @@ use std::sync::Mutex;
 use std::thread;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
+/// Kill an entire process group (the process and all its children)
+#[cfg(unix)]
+fn kill_process_group(child: &Child) {
+    let pid = child.id() as i32;
+    // Kill the process group (negative pid = process group)
+    unsafe {
+        libc::kill(-pid, libc::SIGTERM);
+    }
+    // Give children a moment to exit gracefully, then force kill
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
 /// Event payload for terminal output
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,9 +102,10 @@ impl ProcessRegistry {
                 .map_err(|e| format!("Failed to set script permissions: {}", e))?;
         }
 
-        // Spawn the monitor script
-        let mut child = Command::new("bash")
-            .arg(&script_path)
+        // Spawn the monitor script in its own process group
+        // so we can kill the entire tree (bash + AI CLI + helpers) on stop
+        let mut cmd = Command::new("bash");
+        cmd.arg(&script_path)
             .arg(pr_number.to_string())
             .arg(repo)
             .arg(max_iterations.to_string())
@@ -99,7 +115,15 @@ impl ProcessRegistry {
             .arg(runner)
             .arg(model)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0); // Create new process group
+        }
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
@@ -166,6 +190,11 @@ impl ProcessRegistry {
 
                 // Process has exited - update database and sleep state
                 handle_process_exit(&app_handle, &monitor_id_clone, &pr_id_clone, &last_status_line);
+
+                // Remove finished process from registry to free memory
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    state.processes.cleanup_finished();
+                }
             });
         }
 
@@ -195,7 +224,7 @@ impl ProcessRegistry {
         Ok(pid)
     }
 
-    /// Kill a process by monitor ID
+    /// Kill a process and its entire process group by monitor ID
     pub fn kill(&self, monitor_id: &str) -> Result<(), String> {
         let mut processes = self
             .processes
@@ -203,20 +232,24 @@ impl ProcessRegistry {
             .map_err(|e| format!("Failed to lock process registry: {}", e))?;
 
         if let Some(mut child) = processes.remove(monitor_id) {
-            child
-                .kill()
-                .map_err(|e| format!("Failed to kill process: {}", e))?;
-            // Wait for process to clean up
+            // Kill the entire process group (bash + AI CLI + helpers)
+            #[cfg(unix)]
+            kill_process_group(&child);
+
+            let _ = child.kill(); // Fallback: also kill the direct child
             let _ = child.wait();
         }
 
         Ok(())
     }
 
-    /// Kill all running processes (for app shutdown)
+    /// Kill all running processes and their groups (for app shutdown)
     pub fn kill_all(&self) {
         if let Ok(mut processes) = self.processes.lock() {
             for (_, mut child) in processes.drain() {
+                #[cfg(unix)]
+                kill_process_group(&child);
+
                 let _ = child.kill();
                 let _ = child.wait();
             }

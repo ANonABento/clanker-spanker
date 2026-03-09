@@ -166,8 +166,9 @@ fn handle_start_monitor<R: Runtime>(
         req.interval_minutes,
     ) {
         Ok(monitor) => {
-            // Emit event to refresh frontend
-            let _ = app.emit("pr:refresh", ());
+            // PR is already cached by fetch_and_cache_pr above — no need to
+            // emit pr:refresh which triggers a full forceRefresh fetch and
+            // burns GraphQL rate limit on stale-PR checks.
             (200, ApiResponse::success(monitor))
         }
         Err(e) => (400, ApiResponse::<()>::error(&e)),
