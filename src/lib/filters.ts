@@ -15,6 +15,7 @@ export interface PRFilters {
   // Search
   search: string;            // Matches title, number, branch
   author: string;            // Filter by author username
+  assignee: string;          // Filter by assignee username
 
   // Labels
   labels: string[];          // Include PRs with ANY of these labels
@@ -29,6 +30,7 @@ export const DEFAULT_FILTERS: PRFilters = {
   ciStatus: "all",
   search: "",
   author: "",
+  assignee: "",
   labels: [],
   excludeLabels: [],
 };
@@ -81,6 +83,14 @@ export function filterPRs(prs: PR[], filters: PRFilters): PR[] {
       return false;
     }
 
+    // Assignee
+    if (filters.assignee) {
+      const hasAssignee = pr.assignees.some(
+        (a) => a.toLowerCase() === filters.assignee.toLowerCase()
+      );
+      if (!hasAssignee) return false;
+    }
+
     // Labels (include)
     if (filters.labels.length > 0) {
       const hasLabel = filters.labels.some((l) => pr.labels.includes(l));
@@ -109,6 +119,7 @@ export function hasActiveFilters(filters: PRFilters): boolean {
     filters.ciStatus !== "all" ||
     filters.search !== "" ||
     filters.author !== "" ||
+    filters.assignee !== "" ||
     filters.labels.length > 0 ||
     filters.excludeLabels.length > 0
   );
@@ -136,4 +147,17 @@ export function collectAuthors(prs: PR[]): string[] {
     authorSet.add(pr.author);
   }
   return Array.from(authorSet).sort();
+}
+
+/**
+ * Collect all unique assignees from PRs
+ */
+export function collectAssignees(prs: PR[]): string[] {
+  const assigneeSet = new Set<string>();
+  for (const pr of prs) {
+    for (const assignee of pr.assignees) {
+      assigneeSet.add(assignee);
+    }
+  }
+  return Array.from(assigneeSet).sort();
 }

@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { X, Sun, Moon, Power, Keyboard, Zap } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState, useMemo } from "react";
+import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
-import { getGlobalSettings, setGlobalSettings } from "@/lib/tauri";
-import type { GlobalSettings, ScheduleSettings, NotificationSettings } from "@/lib/types";
+import { getGlobalSettings, setGlobalSettings, detectRunners } from "@/lib/tauri";
+import type { GlobalSettings, AvailableRunners, ModelInfo, FixSettings } from "@/lib/types";
 import type { Theme } from "@/lib/theme";
 
 interface SettingsDialogProps {
@@ -21,123 +20,152 @@ export function SettingsDialog({
   onThemeChange,
 }: SettingsDialogProps) {
   const { isAutoStartEnabled, isLoading: isAutoStartLoading, toggleAutoStart } = useAutostart();
-  const [sleepPreventionEnabled, setSleepPreventionEnabled] = useState(false);
-  const [sleepPreventionLoading, setSleepPreventionLoading] = useState(false);
   const [globalSettings, setGlobalSettingsState] = useState<GlobalSettings | null>(null);
-  const [globalSettingsDraft, setGlobalSettingsDraft] = useState<GlobalSettings | null>(null);
-  const [globalSettingsLoading, setGlobalSettingsLoading] = useState(false);
-  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
+  const [runners, setRunners] = useState<AvailableRunners | null>(null);
+  const [runner, setRunner] = useState<GlobalSettings["runner"]>("auto");
+  const [claudeModel, setClaudeModel] = useState<string>("sonnet");
+  const [codexModel, setCodexModel] = useState<string>("gpt-5.4");
+  const [thinkingLevel, setThinkingLevel] = useState<string>("medium");
+  const [fix, setFix] = useState<FixSettings>({ ci: true, comments: true, conflicts: false });
+  const [pushEnabled, setPushEnabled] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
 
-  // Load sleep prevention setting
+  // Detect available runners on mount
   useEffect(() => {
     if (!isOpen) return;
-    invoke<string | null>("get_setting", { key: "sleep_prevention_enabled" })
-      .then((value) => setSleepPreventionEnabled(value === "true"))
+    detectRunners()
+      .then(setRunners)
       .catch(console.error);
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
-    setGlobalSettingsLoading(true);
     getGlobalSettings()
       .then((settings) => {
-        const cloned = JSON.parse(JSON.stringify(settings)) as GlobalSettings;
         setGlobalSettingsState(settings);
-        setGlobalSettingsDraft(cloned);
+        setRunner(settings.runner);
+        setClaudeModel(settings.claudeModel || "sonnet");
+        setCodexModel(settings.codexModel || "gpt-5.4");
+        setThinkingLevel(settings.thinkingLevel || "medium");
+        setFix(settings.fix || { ci: true, comments: true, conflicts: false });
+        setPushEnabled(settings.pushEnabled);
+        setIsDirty(false);
       })
-      .catch((error) => {
-        console.error("Failed to load global settings:", error);
-      })
-      .finally(() => setGlobalSettingsLoading(false));
+      .catch(console.error);
   }, [isOpen]);
 
-  const toggleSleepPrevention = async () => {
-    setSleepPreventionLoading(true);
-    try {
-      const newValue = !sleepPreventionEnabled;
-      await invoke("set_setting", {
-        key: "sleep_prevention_enabled",
-        value: newValue ? "true" : "false",
-      });
-      setSleepPreventionEnabled(newValue);
-      // Sync sleep state with current monitors
-      await invoke("sync_sleep_prevention");
-    } catch (error) {
-      console.error("Failed to toggle sleep prevention:", error);
-    } finally {
-      setSleepPreventionLoading(false);
+  // Get current model info based on selected runner and model
+  const currentModelInfo = useMemo((): ModelInfo | null => {
+    if (runner === "claude" && runners?.claude) {
+      return runners.claude.models.find((m) => m.slug === claudeModel) || null;
     }
+    if (runner === "codex" && runners?.codex) {
+      return runners.codex.models.find((m) => m.slug === codexModel) || null;
+    }
+    return null;
+  }, [runner, claudeModel, codexModel, runners]);
+
+  // Get available thinking levels for current model
+  const availableThinkingLevels = useMemo(() => {
+    return currentModelInfo?.supportedReasoningLevels || [];
+  }, [currentModelInfo]);
+
+  // Reset thinking level when model changes if current level is not supported
+  useEffect(() => {
+    if (availableThinkingLevels.length > 0) {
+      const isCurrentSupported = availableThinkingLevels.some((l) => l.effort === thinkingLevel);
+      if (!isCurrentSupported) {
+        const defaultLevel = currentModelInfo?.defaultReasoningLevel || "medium";
+        setThinkingLevel(defaultLevel);
+        setIsDirty(true);
+      }
+    }
+  }, [availableThinkingLevels, currentModelInfo, thinkingLevel]);
+
+  const handleRunnerChange = (value: GlobalSettings["runner"]) => {
+    setRunner(value);
+    setIsDirty(true);
   };
 
-  const updateDraft = (updates: Partial<GlobalSettings>) => {
-    setGlobalSettingsDraft((current) => {
-      if (!current) return current;
-      return { ...current, ...updates };
-    });
+  const handleClaudeModelChange = (value: string) => {
+    setClaudeModel(value);
+    setIsDirty(true);
   };
 
-  const updateSchedule = (updates: Partial<ScheduleSettings>) => {
-    setGlobalSettingsDraft((current) => {
-      if (!current) return current;
-      return { ...current, schedule: { ...current.schedule, ...updates } };
-    });
+  const handleCodexModelChange = (value: string) => {
+    setCodexModel(value);
+    setIsDirty(true);
   };
 
-  const updateNotifications = (updates: Partial<NotificationSettings>) => {
-    setGlobalSettingsDraft((current) => {
-      if (!current) return current;
-      return { ...current, notifications: { ...current.notifications, ...updates } };
-    });
+  const handleThinkingLevelChange = (value: string) => {
+    setThinkingLevel(value);
+    setIsDirty(true);
   };
 
-  const dayOptions = useMemo(
-    () => [
-      { id: "mon", label: "Mon" },
-      { id: "tue", label: "Tue" },
-      { id: "wed", label: "Wed" },
-      { id: "thu", label: "Thu" },
-      { id: "fri", label: "Fri" },
-      { id: "sat", label: "Sat" },
-      { id: "sun", label: "Sun" },
-    ],
-    []
-  );
+  const handleFixToggle = (key: keyof FixSettings) => {
+    setFix((prev) => ({ ...prev, [key]: !prev[key] }));
+    setIsDirty(true);
+  };
 
-  const isDirty = useMemo(() => {
-    if (!globalSettings || !globalSettingsDraft) return false;
-    return JSON.stringify(globalSettings) !== JSON.stringify(globalSettingsDraft);
-  }, [globalSettings, globalSettingsDraft]);
+  const handlePushChange = () => {
+    setPushEnabled(!pushEnabled);
+    setIsDirty(true);
+  };
 
-  const saveGlobalSettings = async () => {
-    if (!globalSettingsDraft) return;
-    setGlobalSettingsSaving(true);
+  const save = async () => {
+    if (!globalSettings) return;
+    setSaving(true);
     try {
-      const saved = await setGlobalSettings(globalSettingsDraft);
-      const cloned = JSON.parse(JSON.stringify(saved)) as GlobalSettings;
-      setGlobalSettingsState(saved);
-      setGlobalSettingsDraft(cloned);
+      const updated = {
+        ...globalSettings,
+        runner,
+        claudeModel: claudeModel as GlobalSettings["claudeModel"],
+        codexModel: codexModel as GlobalSettings["codexModel"],
+        thinkingLevel,
+        fix,
+        pushEnabled,
+      };
+      await setGlobalSettings(updated);
+      setGlobalSettingsState(updated);
+      setIsDirty(false);
     } catch (error) {
-      console.error("Failed to save global settings:", error);
+      console.error("Failed to save settings:", error);
     } finally {
-      setGlobalSettingsSaving(false);
+      setSaving(false);
     }
   };
 
   // Close on Escape key
   useEffect(() => {
     if (!isOpen) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
+      if (e.key === "Escape") onClose();
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
+
+  const claudeAvailable = runners?.claude?.available ?? false;
+  const codexAvailable = runners?.codex?.available ?? false;
+  const claudeModels = runners?.claude?.models ?? [];
+  const codexModels = runners?.codex?.models ?? [];
+
+  // Helper to format model name for display (truncate long names)
+  const formatModelName = (model: ModelInfo) => {
+    const name = model.displayName || model.slug;
+    // For buttons, truncate if too long
+    if (name.length > 12) {
+      return name.replace("gpt-", "").replace("-codex", "");
+    }
+    return name;
+  };
+
+  // Determine if we should use dropdown vs buttons
+  const useDropdownForClaude = claudeModels.length > 4;
+  const useDropdownForCodex = codexModels.length > 4 || codexModels.some((m) => m.slug.length > 10);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -148,7 +176,7 @@ export function SettingsDialog({
       />
 
       {/* Dialog */}
-      <div className="relative bg-surface border border-border rounded-lg w-full max-w-2xl max-h-[85vh] overflow-y-auto p-6 shadow-lg animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative bg-surface border border-border rounded-lg w-full max-w-md p-6 shadow-lg animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold text-text-primary">Settings</h2>
@@ -162,11 +190,11 @@ export function SettingsDialog({
         </div>
 
         {/* Content */}
-        <div className="space-y-6">
-          {/* Appearance Section */}
+        <div className="space-y-5">
+          {/* Theme */}
           <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Appearance
+            <h3 className="text-sm font-medium text-text-primary mb-2">
+              Theme
             </h3>
             <div className="flex gap-2">
               <Button
@@ -190,20 +218,12 @@ export function SettingsDialog({
             </div>
           </section>
 
-          {/* Startup Section */}
+          {/* Startup */}
           <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Startup
-            </h3>
             <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
               <div className="flex items-center gap-3">
                 <Power className="h-4 w-4 text-text-secondary" />
-                <div>
-                  <p className="text-sm text-text-primary">Start on login</p>
-                  <p className="text-xs text-text-tertiary">
-                    Launch automatically when you log in
-                  </p>
-                </div>
+                <p className="text-sm text-text-primary">Start on login</p>
               </div>
               <Button
                 variant={isAutoStartEnabled ? "default" : "outline"}
@@ -211,388 +231,236 @@ export function SettingsDialog({
                 onClick={toggleAutoStart}
                 disabled={isAutoStartLoading}
               >
-                {isAutoStartEnabled ? "Enabled" : "Disabled"}
+                {isAutoStartEnabled ? "On" : "Off"}
               </Button>
             </div>
           </section>
 
-          {/* Power Management Section */}
+          {/* Runner */}
           <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Power
+            <h3 className="text-sm font-medium text-text-primary mb-2">
+              Runner
             </h3>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
-              <div className="flex items-center gap-3">
-                <Zap className="h-4 w-4 text-text-secondary" />
-                <div>
-                  <p className="text-sm text-text-primary">Prevent sleep while monitoring</p>
-                  <p className="text-xs text-text-tertiary">
-                    Keep your computer awake when monitors are active
-                  </p>
+            <div className="flex gap-2">
+              <Button
+                variant={runner === "auto" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleRunnerChange("auto")}
+                className="flex-1"
+              >
+                Auto
+              </Button>
+              <Button
+                variant={runner === "claude" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleRunnerChange("claude")}
+                className="flex-1 relative"
+                disabled={!claudeAvailable}
+              >
+                Claude
+                {claudeAvailable ? (
+                  <Check className="h-3 w-3 ml-1 text-green-500" />
+                ) : (
+                  <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
+                )}
+              </Button>
+              <Button
+                variant={runner === "codex" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleRunnerChange("codex")}
+                className="flex-1 relative"
+                disabled={!codexAvailable}
+              >
+                Codex
+                {codexAvailable ? (
+                  <Check className="h-3 w-3 ml-1 text-green-500" />
+                ) : (
+                  <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
+                )}
+              </Button>
+            </div>
+          </section>
+
+          {/* Claude Model */}
+          {runner === "claude" && claudeAvailable && claudeModels.length > 0 && (
+            <section>
+              <h3 className="text-sm font-medium text-text-primary mb-2">
+                Claude Model
+              </h3>
+              {useDropdownForClaude ? (
+                <select
+                  value={claudeModel}
+                  onChange={(e) => handleClaudeModelChange(e.target.value)}
+                  className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary focus:border-primary focus:outline-none"
+                >
+                  {claudeModels.map((m) => (
+                    <option key={m.slug} value={m.slug}>
+                      {m.displayName || m.slug}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex gap-2">
+                  {claudeModels.map((m) => (
+                    <Button
+                      key={m.slug}
+                      variant={claudeModel === m.slug ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handleClaudeModelChange(m.slug)}
+                      className="flex-1 capitalize"
+                    >
+                      {formatModelName(m)}
+                    </Button>
+                  ))}
                 </div>
+              )}
+            </section>
+          )}
+
+          {/* Codex Model */}
+          {runner === "codex" && codexAvailable && codexModels.length > 0 && (
+            <section>
+              <h3 className="text-sm font-medium text-text-primary mb-2">
+                Codex Model
+                {runners?.codex?.currentModel && (
+                  <span className="text-xs text-text-tertiary ml-2">
+                    (config: {runners.codex.currentModel})
+                  </span>
+                )}
+              </h3>
+              {useDropdownForCodex ? (
+                <select
+                  value={codexModel}
+                  onChange={(e) => handleCodexModelChange(e.target.value)}
+                  className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary focus:border-primary focus:outline-none"
+                >
+                  {codexModels.map((m) => (
+                    <option key={m.slug} value={m.slug}>
+                      {m.displayName || m.slug}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {codexModels.map((m) => (
+                    <Button
+                      key={m.slug}
+                      variant={codexModel === m.slug ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handleCodexModelChange(m.slug)}
+                      className="flex-1 min-w-[70px]"
+                    >
+                      {formatModelName(m)}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Thinking Level - only show if model supports it */}
+          {(runner === "claude" || runner === "codex") && availableThinkingLevels.length > 0 && (
+            <section>
+              <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+                <Brain className="h-4 w-4 text-text-secondary" />
+                Thinking Level
+              </h3>
+              <div className="flex gap-2">
+                {availableThinkingLevels.map((level) => (
+                  <Button
+                    key={level.effort}
+                    variant={thinkingLevel === level.effort ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handleThinkingLevelChange(level.effort)}
+                    className="flex-1 capitalize"
+                    title={level.description}
+                  >
+                    {level.effort === "xhigh" ? "X-High" : level.effort}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Fix Options */}
+          <section>
+            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-text-secondary" />
+              What to Fix
+            </h3>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
+                <div>
+                  <p className="text-sm text-text-primary">CI Failures</p>
+                  <p className="text-xs text-text-tertiary">Fix failing builds and tests</p>
+                </div>
+                <Button
+                  variant={fix.ci ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleFixToggle("ci")}
+                >
+                  {fix.ci ? "On" : "Off"}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
+                <div>
+                  <p className="text-sm text-text-primary">PR Comments</p>
+                  <p className="text-xs text-text-tertiary">Address reviewer feedback</p>
+                </div>
+                <Button
+                  variant={fix.comments ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleFixToggle("comments")}
+                >
+                  {fix.comments ? "On" : "Off"}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
+                <div>
+                  <p className="text-sm text-text-primary">Merge Conflicts</p>
+                  <p className="text-xs text-text-tertiary text-amber-500/80">⚠️ Experimental - use with caution</p>
+                </div>
+                <Button
+                  variant={fix.conflicts ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleFixToggle("conflicts")}
+                >
+                  {fix.conflicts ? "On" : "Off"}
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          {/* Push */}
+          <section>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
+              <div>
+                <p className="text-sm text-text-primary">Push changes</p>
+                <p className="text-xs text-text-tertiary">
+                  Allow commits and pushes
+                </p>
               </div>
               <Button
-                variant={sleepPreventionEnabled ? "default" : "outline"}
+                variant={pushEnabled ? "default" : "outline"}
                 size="sm"
-                onClick={toggleSleepPrevention}
-                disabled={sleepPreventionLoading}
+                onClick={handlePushChange}
               >
-                {sleepPreventionEnabled ? "Enabled" : "Disabled"}
+                {pushEnabled ? "On" : "Off"}
               </Button>
             </div>
           </section>
 
-          {/* Automation Section */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Automation
-            </h3>
-            {globalSettingsLoading || !globalSettingsDraft ? (
-              <div className="text-sm text-text-secondary">Loading settings...</div>
-            ) : (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Runner
-                    </label>
-                    <select
-                      value={globalSettingsDraft.runner}
-                      onChange={(e) =>
-                        updateDraft({
-                          runner: e.target.value as GlobalSettings["runner"],
-                        })
-                      }
-                      className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="codex">Codex</option>
-                      <option value="claude">Claude</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                      Steps
-                    </label>
-                    <select
-                      value={globalSettingsDraft.steps}
-                      onChange={(e) =>
-                        updateDraft({
-                          steps: e.target.value as GlobalSettings["steps"],
-                        })
-                      }
-                      className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                    >
-                      <option value="both">CI + Comments</option>
-                      <option value="ci">CI only</option>
-                      <option value="comments">Comments only</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    PR scope
-                  </label>
-                  <select
-                    value={globalSettingsDraft.prScope}
-                    onChange={(e) =>
-                      updateDraft({
-                        prScope: e.target.value as GlobalSettings["prScope"],
-                      })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  >
-                    <option value="all">All open PRs</option>
-                    <option value="involved">Only PRs involving me</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center justify-between rounded-lg border border-border bg-surface-secondary p-3">
-                  <div>
-                    <p className="text-sm text-text-primary">
-                      Auto-start on Draft → Open
-                    </p>
-                    <p className="text-xs text-text-tertiary">
-                      Automatically enqueue when a draft PR opens
-                    </p>
-                  </div>
-                  <Button
-                    variant={globalSettingsDraft.autoStartDraftToOpen ? "default" : "outline"}
-                    size="sm"
-                    onClick={() =>
-                      updateDraft({
-                        autoStartDraftToOpen: !globalSettingsDraft.autoStartDraftToOpen,
-                      })
-                    }
-                  >
-                    {globalSettingsDraft.autoStartDraftToOpen ? "Enabled" : "Disabled"}
-                  </Button>
-                </div>
-
-                <div className="rounded-lg border border-border bg-surface-secondary p-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm text-text-primary">Schedule</p>
-                      <p className="text-xs text-text-tertiary">
-                        Run automation on a schedule
-                      </p>
-                    </div>
-                    <Button
-                      variant={globalSettingsDraft.schedule.enabled ? "default" : "outline"}
-                      size="sm"
-                      onClick={() =>
-                        updateSchedule({
-                          enabled: !globalSettingsDraft.schedule.enabled,
-                        })
-                      }
-                    >
-                      {globalSettingsDraft.schedule.enabled ? "Enabled" : "Disabled"}
-                    </Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {dayOptions.map((day) => {
-                      const active = globalSettingsDraft.schedule.days.includes(day.id);
-                      return (
-                        <Button
-                          key={day.id}
-                          variant={active ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => {
-                            const nextDays = active
-                              ? globalSettingsDraft.schedule.days.filter((d) => d !== day.id)
-                              : [...globalSettingsDraft.schedule.days, day.id];
-                            updateSchedule({ days: nextDays });
-                          }}
-                        >
-                          {day.label}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                        Time
-                      </label>
-                      <input
-                        type="time"
-                        value={globalSettingsDraft.schedule.time}
-                        onChange={(e) => updateSchedule({ time: e.target.value })}
-                        className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                        Timezone
-                      </label>
-                      <input
-                        type="text"
-                        value={globalSettingsDraft.schedule.timezone}
-                        onChange={(e) => updateSchedule({ timezone: e.target.value })}
-                        placeholder="local or e.g. America/Los_Angeles"
-                        className="w-full rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* Limits Section */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Limits
-            </h3>
-            {!globalSettingsDraft ? (
-              <div className="text-sm text-text-secondary">Loading settings...</div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Iterations
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={globalSettingsDraft.defaultIterations}
-                    onChange={(e) =>
-                      updateDraft({ defaultIterations: Number(e.target.value) })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Interval (minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={globalSettingsDraft.intervalMinutes}
-                    onChange={(e) =>
-                      updateDraft({ intervalMinutes: Number(e.target.value) })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Concurrency cap
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={globalSettingsDraft.concurrencyCap}
-                    onChange={(e) =>
-                      updateDraft({ concurrencyCap: Number(e.target.value) })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Max jobs per night
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={globalSettingsDraft.maxJobsPerNight}
-                    onChange={(e) =>
-                      updateDraft({ maxJobsPerNight: Number(e.target.value) })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Pending wait (minutes)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={globalSettingsDraft.pendingWaitMinutes}
-                    onChange={(e) =>
-                      updateDraft({ pendingWaitMinutes: Number(e.target.value) })
-                    }
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* Push + Notifications Section */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Push & Notifications
-            </h3>
-            {!globalSettingsDraft ? (
-              <div className="text-sm text-text-secondary">Loading settings...</div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-lg border border-border bg-surface-secondary p-3">
-                  <div>
-                    <p className="text-sm text-text-primary">Push changes</p>
-                    <p className="text-xs text-text-tertiary">
-                      Allow runners to commit and push fixes
-                    </p>
-                  </div>
-                  <Button
-                    variant={globalSettingsDraft.pushEnabled ? "default" : "outline"}
-                    size="sm"
-                    onClick={() =>
-                      updateDraft({ pushEnabled: !globalSettingsDraft.pushEnabled })
-                    }
-                  >
-                    {globalSettingsDraft.pushEnabled ? "Enabled" : "Disabled"}
-                  </Button>
-                </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-secondary">
-                    Commit message template
-                  </label>
-                  <input
-                    type="text"
-                    value={globalSettingsDraft.commitMessageTemplate}
-                    onChange={(e) =>
-                      updateDraft({ commitMessageTemplate: e.target.value })
-                    }
-                    placeholder="Fix PR #{{prNumber}} feedback"
-                    className="w-full rounded border border-border bg-surface-secondary px-2 py-1.5 text-sm text-text-primary focus:border-[#505050] focus:outline-none"
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <Button
-                    variant={globalSettingsDraft.notifications.onStart ? "default" : "outline"}
-                    size="sm"
-                    onClick={() =>
-                      updateNotifications({
-                        onStart: !globalSettingsDraft.notifications.onStart,
-                      })
-                    }
-                  >
-                    Notify start
-                  </Button>
-                  <Button
-                    variant={globalSettingsDraft.notifications.onComplete ? "default" : "outline"}
-                    size="sm"
-                    onClick={() =>
-                      updateNotifications({
-                        onComplete: !globalSettingsDraft.notifications.onComplete,
-                      })
-                    }
-                  >
-                    Notify complete
-                  </Button>
-                  <Button
-                    variant={globalSettingsDraft.notifications.onFailure ? "default" : "outline"}
-                    size="sm"
-                    onClick={() =>
-                      updateNotifications({
-                        onFailure: !globalSettingsDraft.notifications.onFailure,
-                      })
-                    }
-                  >
-                    Notify failure
-                  </Button>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* Shortcuts Section */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-3">
-              Keyboard Shortcuts
-            </h3>
-            <div className="p-3 rounded-lg bg-surface-secondary border border-border">
-              <div className="flex items-center gap-3">
-                <Keyboard className="h-4 w-4 text-text-secondary" />
-                <div>
-                  <p className="text-sm text-text-primary">Global toggle</p>
-                  <p className="text-xs text-text-tertiary">
-                    Show/hide window from anywhere
-                  </p>
-                </div>
-                <kbd className="ml-auto px-2 py-1 text-xs font-mono bg-surface border border-border rounded">
-                  Cmd+Shift+P
-                </kbd>
-              </div>
-            </div>
-          </section>
-
-          {/* Save Section */}
-          <section className="flex justify-end">
+          {/* Save */}
+          {isDirty && (
             <Button
               size="sm"
-              onClick={saveGlobalSettings}
-              disabled={!isDirty || globalSettingsSaving || globalSettingsLoading}
+              onClick={save}
+              disabled={saving}
+              className="w-full"
             >
-              {globalSettingsSaving ? "Saving..." : "Save settings"}
+              {saving ? "Saving..." : "Save"}
             </Button>
-          </section>
+          )}
         </div>
       </div>
     </div>

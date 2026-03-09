@@ -7,9 +7,21 @@ const GLOBAL_SETTINGS_KEY: &str = "global_settings";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 #[serde(rename_all = "camelCase")]
+pub struct FixSettings {
+    pub ci: bool,
+    pub comments: bool,
+    pub conflicts: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+#[serde(rename_all = "camelCase")]
 pub struct GlobalSettings {
     pub runner: String,
-    pub steps: String,
+    pub claude_model: String,
+    pub codex_model: String,
+    pub thinking_level: String,
+    pub fix: FixSettings,
     pub auto_start_draft_to_open: bool,
     pub pr_scope: String,
     pub schedule: ScheduleSettings,
@@ -69,11 +81,24 @@ impl Default for NotificationSettings {
     }
 }
 
+impl Default for FixSettings {
+    fn default() -> Self {
+        Self {
+            ci: true,
+            comments: true,
+            conflicts: false, // Risky - disabled by default
+        }
+    }
+}
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             runner: "auto".to_string(),
-            steps: "both".to_string(),
+            claude_model: "sonnet".to_string(),
+            codex_model: "gpt-5.4".to_string(),
+            thinking_level: "medium".to_string(),
+            fix: FixSettings::default(),
             auto_start_draft_to_open: false,
             pr_scope: "all".to_string(),
             schedule: ScheduleSettings::default(),

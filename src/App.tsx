@@ -19,7 +19,7 @@ import { useKeyboardNav } from "@/hooks/useKeyboardNav";
 import { useDismissedPRs } from "@/hooks/useDismissedPRs";
 import { usePROrder } from "@/hooks/usePROrder";
 import { Button } from "@/components/ui/button";
-import { filterPRs, collectLabels, collectAuthors } from "@/lib/filters";
+import { filterPRs, collectLabels, collectAuthors, collectAssignees } from "@/lib/filters";
 import type { PR } from "@/lib/types";
 
 function App() {
@@ -41,9 +41,10 @@ function App() {
   // Track completed monitors: prId -> { monitorId, prNumber, iteration, maxIterations, exitReason }
   const [completedMonitors, setCompletedMonitors] = useState<Record<string, { monitorId: string; prNumber: number; iteration: number; maxIterations: number; exitReason: string }>>({});
 
-  // Collect available labels and authors for filter options
+  // Collect available labels, authors, and assignees for filter options
   const availableLabels = useMemo(() => collectLabels(prs), [prs]);
   const availableAuthors = useMemo(() => collectAuthors(prs), [prs]);
+  const availableAssignees = useMemo(() => collectAssignees(prs), [prs]);
 
   // Combine PR data with monitor state for category assignment and apply filters
   const prsWithMonitorState = useMemo(() => {
@@ -260,6 +261,7 @@ function App() {
         onToggleFilters={() => setShowFilters(!showFilters)}
         availableLabels={availableLabels}
         availableAuthors={availableAuthors}
+        availableAssignees={availableAssignees}
         availableRepos={repos}
         lastRefreshTime={lastRefreshTime}
       />

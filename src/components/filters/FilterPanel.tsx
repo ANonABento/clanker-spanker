@@ -8,6 +8,7 @@ interface FilterPanelProps {
   onClose: () => void;
   availableLabels: string[];
   availableAuthors: string[];
+  availableAssignees: string[];
   availableRepos: string[];
 }
 
@@ -18,6 +19,7 @@ export function FilterPanel({
   onClose,
   availableLabels,
   availableAuthors,
+  availableAssignees,
   availableRepos,
 }: FilterPanelProps) {
   return (
@@ -135,24 +137,47 @@ export function FilterPanel({
           </div>
         </div>
 
-        {/* Author */}
-        {availableAuthors.length > 0 && (
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-[#808080]">
-              Author
-            </label>
-            <select
-              value={filters.author}
-              onChange={(e) => onFilterChange("author", e.target.value)}
-              className="w-full rounded border border-[#262626] bg-[#1a1a1a] px-2 py-1.5 text-sm text-[#c0c0c0] focus:border-[#505050] focus:outline-none"
-            >
-              <option value="">All authors</option>
-              {availableAuthors.map((author) => (
-                <option key={author} value={author}>
-                  {author}
-                </option>
-              ))}
-            </select>
+        {/* Author & Assignee */}
+        {(availableAuthors.length > 0 || availableAssignees.length > 0) && (
+          <div className="grid grid-cols-2 gap-3">
+            {availableAuthors.length > 0 && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#808080]">
+                  Author
+                </label>
+                <select
+                  value={filters.author}
+                  onChange={(e) => onFilterChange("author", e.target.value)}
+                  className="w-full rounded border border-[#262626] bg-[#1a1a1a] px-2 py-1.5 text-sm text-[#c0c0c0] focus:border-[#505050] focus:outline-none"
+                >
+                  <option value="">All</option>
+                  {availableAuthors.map((author) => (
+                    <option key={author} value={author}>
+                      {author}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {availableAssignees.length > 0 && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[#808080]">
+                  Assigned to
+                </label>
+                <select
+                  value={filters.assignee}
+                  onChange={(e) => onFilterChange("assignee", e.target.value)}
+                  className="w-full rounded border border-[#262626] bg-[#1a1a1a] px-2 py-1.5 text-sm text-[#c0c0c0] focus:border-[#505050] focus:outline-none"
+                >
+                  <option value="">All</option>
+                  {availableAssignees.map((assignee) => (
+                    <option key={assignee} value={assignee}>
+                      {assignee}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         )}
 

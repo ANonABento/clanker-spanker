@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PR, Monitor, PRComment, GlobalSettings } from "./types";
+import type { PR, Monitor, PRComment, GlobalSettings, AvailableRunners } from "./types";
 
 /**
  * Safe invoke wrapper that handles errors gracefully
@@ -139,6 +139,13 @@ export async function getGlobalSettings(): Promise<GlobalSettings> {
  */
 export async function setGlobalSettings(settings: GlobalSettings): Promise<GlobalSettings> {
   return invoke<GlobalSettings>("set_global_settings", { settings });
+}
+
+/**
+ * Detect available CLI runners (Claude, Codex) and their models
+ */
+export async function detectRunners(): Promise<AvailableRunners> {
+  return invoke<AvailableRunners>("detect_runners");
 }
 
 // ============ Monitor Commands ============

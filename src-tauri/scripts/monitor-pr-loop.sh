@@ -19,29 +19,22 @@ DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [STEPS]}"
-REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [STEPS]}"
+PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL]}"
+REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL]}"
 MAX_ITER="${3:-10}"
 INTERVAL="${4:-15}"
 PENDING_WAIT_MINUTES="${5:-15}"
-STEPS="${6:-both}"
+FIX_FLAGS="${6:-ci,comments}"
+RUNNER="${7:-auto}"
+MODEL="${8:-auto}"
 
-DO_CI=1
-DO_COMMENTS=1
-case "$STEPS" in
-  ci)
-    DO_CI=1
-    DO_COMMENTS=0
-    ;;
-  comments)
-    DO_CI=0
-    DO_COMMENTS=1
-    ;;
-  both|*)
-    DO_CI=1
-    DO_COMMENTS=1
-    ;;
-esac
+# Parse comma-separated fix flags
+DO_CI=0
+DO_COMMENTS=0
+DO_CONFLICTS=0
+[[ "$FIX_FLAGS" == *"ci"* ]] && DO_CI=1
+[[ "$FIX_FLAGS" == *"comments"* ]] && DO_COMMENTS=1
+[[ "$FIX_FLAGS" == *"conflicts"* ]] && DO_CONFLICTS=1
 
 # Parse owner/repo
 OWNER="${REPO%%/*}"
@@ -143,9 +136,12 @@ echo ""
 echo -e "${CYAN}╭─────────────────────────────────────────────────────────────╮${RESET}"
 echo -e "${CYAN}│${RESET}  ${BOLD}📋 Clanker Spanker${RESET} - PR ${MAGENTA}#$PR_NUM${RESET}"
 echo -e "${CYAN}│${RESET}  ${DIM}Repo:${RESET} $REPO"
-echo -e "${CYAN}│${RESET}  ${DIM}Checking every ${INTERVAL}m | Max $MAX_ITER iterations | Steps: $STEPS${RESET}"
+echo -e "${CYAN}│${RESET}  ${DIM}Runner:${RESET} ${BOLD}$RUNNER${RESET} ${DIM}| Model:${RESET} ${BOLD}$MODEL${RESET}"
+echo -e "${CYAN}│${RESET}  ${DIM}Checking every ${INTERVAL}m | Max $MAX_ITER iterations | Fix: $FIX_FLAGS${RESET}"
 echo -e "${CYAN}╰─────────────────────────────────────────────────────────────╯${RESET}"
 echo ""
+echo "@@RUNNER:$RUNNER@@"
+echo "@@MODEL:$MODEL@@"
 
 # Initialize state
 mkdir -p "$STATE_DIR"
@@ -256,6 +252,48 @@ run_fix_ci() {
   fi
 }
 
+# Function to check for merge conflicts
+check_merge_conflicts() {
+  local result
+  result=$(gh pr view "$PR_NUM" --repo "$REPO" --json mergeable -q '.mergeable' 2>/dev/null)
+  case "$result" in
+    CONFLICTING) echo "conflicts" ;;
+    MERGEABLE) echo "clean" ;;
+    UNKNOWN) echo "unknown" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+# Function to fix merge conflicts by rebasing on base branch
+fix_merge_conflicts() {
+  echo -e "${CYAN}🔧 Attempting to fix merge conflicts...${RESET}"
+
+  # Get the base branch
+  local base_branch
+  base_branch=$(gh pr view "$PR_NUM" --repo "$REPO" --json baseRefName -q '.baseRefName' 2>/dev/null)
+  if [ -z "$base_branch" ]; then
+    echo -e "${YELLOW}⚠️ Could not determine base branch${RESET}"
+    return 1
+  fi
+
+  echo -e "${DIM}Base branch: $base_branch${RESET}"
+
+  if command -v claude &> /dev/null; then
+    # Use Claude to intelligently resolve conflicts
+    (cd "$REPO_DIR" && claude -p "The PR #$PR_NUM has merge conflicts with $base_branch. Please:
+1. Fetch the latest $base_branch
+2. Attempt to rebase or merge $base_branch into the current branch
+3. Resolve any conflicts intelligently based on the PR's intent
+4. Push the resolved changes
+
+Be careful with conflict resolution - preserve the PR's intended changes while incorporating necessary updates from $base_branch." --verbose --output-format stream-json --dangerously-skip-permissions 2>&1) | \
+      jq -r --unbuffered 'select(.type) | if .type == "assistant" then (.message.content[]?.text // empty) elif .type == "result" then (.result.content[]?.text // empty) elif .type == "content_block_delta" then (.delta.text // empty) else empty end' 2>/dev/null || true
+  else
+    echo -e "${YELLOW}⚠️ Claude CLI not found, skipping conflict fix${RESET}"
+    return 1
+  fi
+}
+
 # Main loop
 for iter in $(seq 1 $MAX_ITER); do
   # Emit parseable iteration marker for dashboard
@@ -265,6 +303,37 @@ for iter in $(seq 1 $MAX_ITER); do
   echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
   echo -e "${BOLD}🔍 Iteration ${MAGENTA}$iter${RESET}${BOLD}/${DIM}$MAX_ITER${RESET} ${DIM}- $(date '+%H:%M:%S')${RESET}"
   echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # STEP 0: Check and fix merge conflicts (if enabled)
+  # ═══════════════════════════════════════════════════════════════
+  if [ "$DO_CONFLICTS" -eq 1 ]; then
+    echo ""
+    echo -e "${DIM}🔀 Checking for merge conflicts...${RESET}"
+    merge_status=$(check_merge_conflicts)
+    case "$merge_status" in
+      conflicts)
+        echo -e "${RED}⚠️ Merge conflicts detected${RESET}"
+        echo "@@MERGE_STATUS:conflicts@@"
+        fix_merge_conflicts
+        # Re-check after fix attempt
+        merge_status=$(check_merge_conflicts)
+        if [ "$merge_status" = "conflicts" ]; then
+          echo -e "${YELLOW}⚠️ Conflicts still present after fix attempt${RESET}"
+        else
+          echo -e "${GREEN}✅ Conflicts resolved${RESET}"
+        fi
+        ;;
+      clean)
+        echo -e "${GREEN}✅ No merge conflicts${RESET}"
+        echo "@@MERGE_STATUS:clean@@"
+        ;;
+      *)
+        echo -e "${DIM}Merge status: $merge_status${RESET}"
+        echo "@@MERGE_STATUS:$merge_status@@"
+        ;;
+    esac
+  fi
 
   # ═══════════════════════════════════════════════════════════════
   # STEP 1: Check CI status (wait if pending)
@@ -283,7 +352,7 @@ for iter in $(seq 1 $MAX_ITER); do
     echo "@@CI_STATUS:$ci_status@@"
   else
     ci_status="skipped"
-    echo -e "${DIM}⏭️  CI checks skipped (steps=$STEPS)${RESET}"
+    echo -e "${DIM}⏭️  CI checks skipped${RESET}"
     echo "@@CI_STATUS:skipped@@"
   fi
 

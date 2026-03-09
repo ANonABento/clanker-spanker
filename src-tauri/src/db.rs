@@ -140,6 +140,7 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
             title TEXT NOT NULL,
             url TEXT NOT NULL,
             author TEXT NOT NULL,
+            assignees TEXT NOT NULL DEFAULT '[]',
             state TEXT NOT NULL,
             is_draft INTEGER NOT NULL DEFAULT 0,
             ci_status TEXT,
@@ -190,7 +191,16 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_pr_comments_unresolved ON pr_comments(pr_id, is_resolved);
         CREATE INDEX IF NOT EXISTS idx_pr_comments_thread ON pr_comments(thread_id);
         "#,
-    )
+    )?;
+
+    // Migration: Add assignees column if it doesn't exist
+    // SQLite doesn't support IF NOT EXISTS for columns, so we try and ignore errors
+    let _ = conn.execute(
+        "ALTER TABLE pr_cache ADD COLUMN assignees TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+
+    Ok(())
 }
 
 /// Get a setting value

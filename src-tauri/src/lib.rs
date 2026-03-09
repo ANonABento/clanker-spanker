@@ -31,6 +31,8 @@ pub struct GitHubPR {
     pub state: String,
     pub is_draft: bool,
     pub author: Author,
+    #[serde(default)]
+    pub assignees: Vec<Author>,
     pub head_ref_name: String,
     pub base_ref_name: String,
     pub labels: Vec<Label>,
@@ -67,6 +69,7 @@ pub struct PR {
     pub title: String,
     pub url: String,
     pub author: String,
+    pub assignees: Vec<String>,
     pub repo: String,
     pub state: String,
     pub is_draft: bool,
@@ -121,7 +124,7 @@ fn fetch_prs_from_github(
         "pr".to_string(),
         "list".to_string(),
         "--json".to_string(),
-        "number,title,url,state,isDraft,author,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,mergeable,createdAt,updatedAt".to_string(),
+        "number,title,url,state,isDraft,author,assignees,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,mergeable,createdAt,updatedAt".to_string(),
         "--limit".to_string(),
         "50".to_string(),
         "--repo".to_string(),
@@ -163,6 +166,7 @@ fn fetch_prs_from_github(
                 title: gh_pr.title,
                 url: gh_pr.url,
                 author: gh_pr.author.login,
+                assignees: gh_pr.assignees.into_iter().map(|a| a.login).collect(),
                 repo: repo_path.to_string(),
                 state: gh_pr.state.to_lowercase(),
                 is_draft: gh_pr.is_draft,
@@ -190,16 +194,17 @@ fn cache_pr(conn: &rusqlite::Connection, pr: &PR) -> rusqlite::Result<()> {
     conn.execute(
         r#"
         INSERT INTO pr_cache (
-            id, number, repo, title, url, author, state, is_draft,
+            id, number, repo, title, url, author, assignees, state, is_draft,
             ci_status, ci_url, review_status, reviewers, comments_count,
             unresolved_threads, labels, branch, base_branch, created_at,
             updated_at, column_assignment, cached_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, ?20, datetime('now')
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+            ?15, ?16, ?17, ?18, ?19, ?20, ?21, datetime('now')
         )
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
+            assignees = excluded.assignees,
             state = excluded.state,
             is_draft = excluded.is_draft,
             ci_status = excluded.ci_status,
@@ -218,6 +223,7 @@ fn cache_pr(conn: &rusqlite::Connection, pr: &PR) -> rusqlite::Result<()> {
             pr.title,
             pr.url,
             pr.author,
+            serde_json::to_string(&pr.assignees).unwrap_or_else(|_| "[]".to_string()),
             pr.state,
             pr.is_draft as i32,
             pr.ci_status,
@@ -242,7 +248,7 @@ fn get_cached_prs_for_repo(conn: &rusqlite::Connection, repo: &str) -> Result<Ve
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, number, repo, title, url, author, state, is_draft,
+            SELECT id, number, repo, title, url, author, assignees, state, is_draft,
                    ci_status, ci_url, review_status, reviewers, comments_count,
                    unresolved_threads, labels, branch, base_branch, created_at,
                    updated_at, column_assignment
@@ -255,8 +261,9 @@ fn get_cached_prs_for_repo(conn: &rusqlite::Connection, repo: &str) -> Result<Ve
 
     let prs = stmt
         .query_map([repo], |row| {
-            let reviewers_json: String = row.get(11)?;
-            let labels_json: String = row.get(14)?;
+            let assignees_json: String = row.get(6)?;
+            let reviewers_json: String = row.get(12)?;
+            let labels_json: String = row.get(15)?;
 
             Ok(PR {
                 id: row.get(0)?,
@@ -265,20 +272,21 @@ fn get_cached_prs_for_repo(conn: &rusqlite::Connection, repo: &str) -> Result<Ve
                 title: row.get(3)?,
                 url: row.get(4)?,
                 author: row.get(5)?,
-                state: row.get(6)?,
-                is_draft: row.get::<_, i32>(7)? != 0,
-                ci_status: row.get(8)?,
-                ci_url: row.get(9)?,
-                review_status: row.get(10)?,
+                assignees: serde_json::from_str(&assignees_json).unwrap_or_default(),
+                state: row.get(7)?,
+                is_draft: row.get::<_, i32>(8)? != 0,
+                ci_status: row.get(9)?,
+                ci_url: row.get(10)?,
+                review_status: row.get(11)?,
                 reviewers: serde_json::from_str(&reviewers_json).unwrap_or_default(),
-                comments_count: row.get(12)?,
-                unresolved_threads: row.get(13)?,
+                comments_count: row.get(13)?,
+                unresolved_threads: row.get(14)?,
                 labels: serde_json::from_str(&labels_json).unwrap_or_default(),
-                branch: row.get(15)?,
-                base_branch: row.get(16)?,
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
-                category: row.get(19)?,
+                branch: row.get(16)?,
+                base_branch: row.get(17)?,
+                created_at: row.get(18)?,
+                updated_at: row.get(19)?,
+                category: row.get(20)?,
             })
         })
         .map_err(|e| format!("Query failed: {}", e))?
@@ -695,6 +703,7 @@ pub fn run() {
             settings::set_setting,
             settings::get_global_settings,
             settings::set_global_settings,
+            settings::detect_runners,
             orchestrator::start_overnight_run,
             orchestrator::get_active_runs,
             monitor::start_monitor,

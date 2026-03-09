@@ -20,6 +20,7 @@ export interface PR {
   title: string;
   url: string;
   author: string;
+  assignees: string[];
   repo: string; // "owner/repo"
 
   // Status
@@ -103,9 +104,49 @@ export interface NotificationSettings {
   onFailure: boolean;
 }
 
+export type ClaudeModel = "opus" | "sonnet" | "haiku";
+export type CodexModel = string; // Dynamic from CLI
+
+export interface ReasoningLevel {
+  effort: string;
+  description: string;
+}
+
+export interface ModelInfo {
+  slug: string;
+  displayName: string;
+  defaultReasoningLevel: string | null;
+  supportedReasoningLevels: ReasoningLevel[];
+}
+
+export interface ClaudeInfo {
+  available: boolean;
+  models: ModelInfo[];
+}
+
+export interface CodexInfo {
+  available: boolean;
+  models: ModelInfo[];
+  currentModel: string | null;
+}
+
+export interface AvailableRunners {
+  claude: ClaudeInfo | null;
+  codex: CodexInfo | null;
+}
+
+export interface FixSettings {
+  ci: boolean;
+  comments: boolean;
+  conflicts: boolean;
+}
+
 export interface GlobalSettings {
   runner: "auto" | "codex" | "claude";
-  steps: "both" | "ci" | "comments";
+  claudeModel: ClaudeModel;
+  codexModel: CodexModel;
+  thinkingLevel: string;
+  fix: FixSettings;
   autoStartDraftToOpen: boolean;
   prScope: "all" | "involved";
   schedule: ScheduleSettings;

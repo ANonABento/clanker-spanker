@@ -129,17 +129,25 @@ pub fn start_monitor(
     interval_minutes: Option<i32>,
 ) -> Result<Monitor, String> {
     let id = Uuid::new_v4().to_string();
-    let (max_iter, interval, pending_wait_minutes, steps) = {
+    let (max_iter, interval, pending_wait_minutes, fix, runner, model) = {
         let conn = state
             .db
             .lock()
             .map_err(|e| format!("Failed to lock database: {}", e))?;
         let settings = global_settings::ensure_global_settings(&conn)?;
+        // Determine effective model based on runner
+        let effective_model = match settings.runner.as_str() {
+            "claude" => settings.claude_model.clone(),
+            "codex" => settings.codex_model.clone(),
+            _ => "auto".to_string(),
+        };
         (
             max_iterations.unwrap_or(settings.default_iterations),
             interval_minutes.unwrap_or(settings.interval_minutes),
             settings.pending_wait_minutes,
-            settings.steps,
+            settings.fix,
+            settings.runner,
+            effective_model,
         )
     };
     let now: DateTime<Utc> = Utc::now();
@@ -214,7 +222,9 @@ pub fn start_monitor(
         max_iter,
         interval,
         pending_wait_minutes,
-        &steps,
+        &fix,
+        &runner,
+        &model,
     )?;
 
     // Update the PID in the database

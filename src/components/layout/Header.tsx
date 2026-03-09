@@ -19,6 +19,7 @@ interface HeaderProps {
   onToggleFilters: () => void;
   availableLabels: string[];
   availableAuthors: string[];
+  availableAssignees: string[];
   availableRepos: string[];
   lastRefreshTime?: Date | null;
 }
@@ -36,6 +37,7 @@ export function Header({
   onToggleFilters,
   availableLabels,
   availableAuthors,
+  availableAssignees,
   availableRepos,
   lastRefreshTime,
 }: HeaderProps) {
@@ -100,6 +102,7 @@ export function Header({
               onClose={onToggleFilters}
               availableLabels={availableLabels}
               availableAuthors={availableAuthors}
+              availableAssignees={availableAssignees}
               availableRepos={availableRepos}
             />
           )}

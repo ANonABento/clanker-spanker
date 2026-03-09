@@ -1,4 +1,5 @@
 use crate::db::{self, AppState};
+use crate::global_settings::FixSettings;
 use crate::orchestrator;
 use crate::sleep_prevention;
 use serde::Serialize;
@@ -41,8 +42,22 @@ impl ProcessRegistry {
         max_iterations: i32,
         interval_minutes: i32,
         pending_wait_minutes: i32,
-        steps: &str,
+        fix: &FixSettings,
+        runner: &str,
+        model: &str,
     ) -> Result<u32, String> {
+        // Convert FixSettings to comma-separated flags
+        let mut fix_flags = Vec::new();
+        if fix.ci {
+            fix_flags.push("ci");
+        }
+        if fix.comments {
+            fix_flags.push("comments");
+        }
+        if fix.conflicts {
+            fix_flags.push("conflicts");
+        }
+        let fix_flags_str = fix_flags.join(",");
         // Get the scripts directory path using dirs crate
         let app_data_dir = dirs::data_local_dir()
             .ok_or_else(|| "Failed to get local data directory".to_string())?
@@ -80,7 +95,9 @@ impl ProcessRegistry {
             .arg(max_iterations.to_string())
             .arg(interval_minutes.to_string())
             .arg(pending_wait_minutes.to_string())
-            .arg(steps)
+            .arg(&fix_flags_str)
+            .arg(runner)
+            .arg(model)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

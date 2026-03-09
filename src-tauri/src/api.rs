@@ -186,7 +186,7 @@ fn fetch_and_cache_pr(state: &AppState, pr_number: i32, repo: &str) -> Result<()
             "--repo",
             repo,
             "--json",
-            "number,title,url,state,isDraft,author,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,createdAt,updatedAt",
+            "number,title,url,state,isDraft,author,assignees,headRefName,baseRefName,labels,reviewDecision,statusCheckRollup,createdAt,updatedAt",
         ])
         .output()
         .map_err(|e| format!("Failed to execute gh CLI: {}", e))?;
@@ -209,6 +209,14 @@ fn fetch_and_cache_pr(state: &AppState, pr_number: i32, repo: &str) -> Result<()
     let title = gh_pr["title"].as_str().unwrap_or("Unknown");
     let url = gh_pr["url"].as_str().unwrap_or("");
     let author = gh_pr["author"]["login"].as_str().unwrap_or("unknown");
+    let assignees: Vec<String> = gh_pr["assignees"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a["login"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     let state_str = gh_pr["state"].as_str().unwrap_or("open").to_lowercase();
     let is_draft = gh_pr["isDraft"].as_bool().unwrap_or(false);
     let branch = gh_pr["headRefName"].as_str().unwrap_or("");
@@ -258,16 +266,17 @@ fn fetch_and_cache_pr(state: &AppState, pr_number: i32, repo: &str) -> Result<()
     conn.execute(
         r#"
         INSERT INTO pr_cache (
-            id, number, repo, title, url, author, state, is_draft,
+            id, number, repo, title, url, author, assignees, state, is_draft,
             ci_status, ci_url, review_status, reviewers, comments_count,
             unresolved_threads, labels, branch, base_branch, created_at,
             updated_at, column_assignment, cached_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-            ?14, ?15, ?16, ?17, ?18, ?19, 'monitoring', datetime('now')
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+            ?15, ?16, ?17, ?18, ?19, ?20, 'monitoring', datetime('now')
         )
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
+            assignees = excluded.assignees,
             state = excluded.state,
             is_draft = excluded.is_draft,
             ci_status = excluded.ci_status,
@@ -283,6 +292,7 @@ fn fetch_and_cache_pr(state: &AppState, pr_number: i32, repo: &str) -> Result<()
             title,
             url,
             author,
+            serde_json::to_string(&assignees).unwrap_or_else(|_| "[]".to_string()),
             state_str,
             is_draft as i32,
             ci_status,
@@ -456,17 +466,25 @@ pub(crate) fn start_monitor_internal<R: Runtime>(
     use uuid::Uuid;
 
     let id = Uuid::new_v4().to_string();
-    let (max_iter, interval, pending_wait_minutes, steps) = {
+    let (max_iter, interval, pending_wait_minutes, fix, runner, model) = {
         let conn = state
             .db
             .lock()
             .map_err(|e| format!("Failed to lock database: {}", e))?;
         let settings = global_settings::ensure_global_settings(&conn)?;
+        // Determine effective model based on runner
+        let effective_model = match settings.runner.as_str() {
+            "claude" => settings.claude_model.clone(),
+            "codex" => settings.codex_model.clone(),
+            _ => "auto".to_string(),
+        };
         (
             max_iterations.unwrap_or(settings.default_iterations),
             interval_minutes.unwrap_or(settings.interval_minutes),
             settings.pending_wait_minutes,
-            settings.steps,
+            settings.fix,
+            settings.runner,
+            effective_model,
         )
     };
     let now = Utc::now();
@@ -541,7 +559,9 @@ pub(crate) fn start_monitor_internal<R: Runtime>(
         max_iter,
         interval,
         pending_wait_minutes,
-        &steps,
+        &fix,
+        &runner,
+        &model,
     )?;
 
     // Update the PID
