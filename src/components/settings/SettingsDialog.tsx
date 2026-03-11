@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
-import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench, EyeOff, Users, ChevronDown, Settings, Cpu, Activity } from "lucide-react";
+import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench, EyeOff, Users, ChevronDown, Settings, Cpu, Activity, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
-import { getGlobalSettings, setGlobalSettings, detectRunners } from "@/lib/tauri";
+import { getGlobalSettings, setGlobalSettings, detectRunners, clearPRCache } from "@/lib/tauri";
 import type { GlobalSettings, AvailableRunners, ModelInfo, FixSettings } from "@/lib/types";
 import type { Theme } from "@/lib/theme";
 
@@ -71,6 +71,7 @@ export function SettingsDialog({
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [expandedSection, setExpandedSection] = useState<AccordionSection | null>("general");
+  const [purging, setPurging] = useState(false);
 
   const toggleSection = (section: AccordionSection) => {
     setExpandedSection((prev) => (prev === section ? null : section));
@@ -169,6 +170,19 @@ export function SettingsDialog({
   const handlePrScopeChange = (value: "all" | "involved") => {
     setPrScope(value);
     setIsDirty(true);
+  };
+
+  const handlePurge = async () => {
+    setPurging(true);
+    try {
+      await clearPRCache();
+      // Dispatch event to trigger refresh in dashboard
+      window.dispatchEvent(new CustomEvent("pr-cache-purged"));
+    } catch (error) {
+      console.error("Failed to purge PR cache:", error);
+    } finally {
+      setPurging(false);
+    }
   };
 
   const save = async () => {
@@ -320,6 +334,26 @@ export function SettingsDialog({
                   All PRs
                 </Button>
               </div>
+            </div>
+
+            {/* Purge Cache */}
+            <div className="flex items-center justify-between pt-2 border-t border-border/50">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Trash2 className="h-3.5 w-3.5 text-text-secondary" />
+                  <span className="text-sm text-text-primary">Purge PR Cache</span>
+                </div>
+                <p className="text-xs text-text-tertiary mt-0.5">Clear all cached PRs, then refresh</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handlePurge}
+                disabled={purging}
+                className="text-red-500 hover:text-red-600 hover:border-red-500/50"
+              >
+                {purging ? "Purging..." : "Purge"}
+              </Button>
             </div>
           </Accordion>
 
