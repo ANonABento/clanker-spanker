@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench, EyeOff, Users } from "lucide-react";
+import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench, EyeOff, Users, ChevronDown, Settings, Cpu, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
 import { getGlobalSettings, setGlobalSettings, detectRunners } from "@/lib/tauri";
@@ -11,6 +11,44 @@ interface SettingsDialogProps {
   onClose: () => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+}
+
+type AccordionSection = "general" | "ai" | "monitor";
+
+interface AccordionProps {
+  title: string;
+  icon: React.ReactNode;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}
+
+function Accordion({ title, icon, isOpen, onToggle, children }: AccordionProps) {
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-3 bg-surface-secondary hover:bg-surface-hover transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          {icon}
+          <span className="text-sm font-medium text-text-primary">{title}</span>
+        </div>
+        <ChevronDown
+          className={`h-4 w-4 text-text-secondary transition-transform duration-200 ${
+            isOpen ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      <div
+        className={`overflow-hidden transition-all duration-200 ${
+          isOpen ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"
+        }`}
+      >
+        <div className="p-3 space-y-3 border-t border-border">{children}</div>
+      </div>
+    </div>
+  );
 }
 
 export function SettingsDialog({
@@ -32,6 +70,11 @@ export function SettingsDialog({
   const [pushEnabled, setPushEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const [expandedSection, setExpandedSection] = useState<AccordionSection | null>("general");
+
+  const toggleSection = (section: AccordionSection) => {
+    setExpandedSection((prev) => (prev === section ? null : section));
+  };
 
   // Detect available runners on mount
   useEffect(() => {
@@ -113,7 +156,6 @@ export function SettingsDialog({
   };
 
   const handleIgnoredChecksChange = (value: string) => {
-    // Split by newlines, filter empty lines
     const checks = value.split("\n").map((s) => s.trim()).filter(Boolean);
     setIgnoredChecks(checks);
     setIsDirty(true);
@@ -171,17 +213,14 @@ export function SettingsDialog({
   const claudeModels = runners?.claude?.models ?? [];
   const codexModels = runners?.codex?.models ?? [];
 
-  // Helper to format model name for display (truncate long names)
   const formatModelName = (model: ModelInfo) => {
     const name = model.displayName || model.slug;
-    // For buttons, truncate if too long
     if (name.length > 12) {
       return name.replace("gpt-", "").replace("-codex", "");
     }
     return name;
   };
 
-  // Determine if we should use dropdown vs buttons
   const useDropdownForClaude = claudeModels.length > 4;
   const useDropdownForCodex = codexModels.length > 4 || codexModels.some((m) => m.slug.length > 10);
 
@@ -194,9 +233,9 @@ export function SettingsDialog({
       />
 
       {/* Dialog */}
-      <div className="relative bg-surface border border-border rounded-lg w-full max-w-md p-6 shadow-lg animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative bg-surface border border-border rounded-lg w-full max-w-md p-4 shadow-lg animate-in fade-in zoom-in-95 duration-200 max-h-[85vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-text-primary">Settings</h2>
           <button
             onClick={onClose}
@@ -207,41 +246,45 @@ export function SettingsDialog({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="space-y-5">
-          {/* Theme */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-2">
-              Theme
-            </h3>
-            <div className="flex gap-2">
-              <Button
-                variant={theme === "dark" ? "default" : "outline"}
-                size="sm"
-                onClick={() => onThemeChange("dark")}
-                className="flex-1"
-              >
-                <Moon className="h-4 w-4 mr-2" />
-                Dark
-              </Button>
-              <Button
-                variant={theme === "light" ? "default" : "outline"}
-                size="sm"
-                onClick={() => onThemeChange("light")}
-                className="flex-1"
-              >
-                <Sun className="h-4 w-4 mr-2" />
-                Light
-              </Button>
+        {/* Content - Scrollable */}
+        <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+          {/* General Section */}
+          <Accordion
+            title="General"
+            icon={<Settings className="h-4 w-4 text-text-secondary" />}
+            isOpen={expandedSection === "general"}
+            onToggle={() => toggleSection("general")}
+          >
+            {/* Theme */}
+            <div>
+              <p className="text-xs text-text-tertiary mb-1.5">Theme</p>
+              <div className="flex gap-2">
+                <Button
+                  variant={theme === "dark" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => onThemeChange("dark")}
+                  className="flex-1"
+                >
+                  <Moon className="h-3 w-3 mr-1.5" />
+                  Dark
+                </Button>
+                <Button
+                  variant={theme === "light" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => onThemeChange("light")}
+                  className="flex-1"
+                >
+                  <Sun className="h-3 w-3 mr-1.5" />
+                  Light
+                </Button>
+              </div>
             </div>
-          </section>
 
-          {/* Startup */}
-          <section>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
-              <div className="flex items-center gap-3">
-                <Power className="h-4 w-4 text-text-secondary" />
-                <p className="text-sm text-text-primary">Start on login</p>
+            {/* Startup */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Power className="h-3.5 w-3.5 text-text-secondary" />
+                <span className="text-sm text-text-primary">Start on login</span>
               </div>
               <Button
                 variant={isAutoStartEnabled ? "default" : "outline"}
@@ -252,261 +295,250 @@ export function SettingsDialog({
                 {isAutoStartEnabled ? "On" : "Off"}
               </Button>
             </div>
-          </section>
 
-          {/* PR Scope */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
-              <Users className="h-4 w-4 text-text-secondary" />
-              PR Scope
-            </h3>
-            <div className="flex gap-2">
-              <Button
-                variant={prScope === "involved" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePrScopeChange("involved")}
-                className="flex-1"
-              >
-                My PRs
-              </Button>
-              <Button
-                variant={prScope === "all" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePrScopeChange("all")}
-                className="flex-1"
-              >
-                All PRs
-              </Button>
-            </div>
-            <p className="text-xs text-text-tertiary mt-1.5">
-              "My PRs" only fetches PRs you authored or are assigned to (saves RAM)
-            </p>
-          </section>
-
-          {/* Runner */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-2">
-              Runner
-            </h3>
-            <div className="flex gap-2">
-              <Button
-                variant={runner === "auto" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleRunnerChange("auto")}
-                className="flex-1"
-              >
-                Auto
-              </Button>
-              <Button
-                variant={runner === "claude" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleRunnerChange("claude")}
-                className="flex-1 relative"
-                disabled={!claudeAvailable}
-              >
-                Claude
-                {claudeAvailable ? (
-                  <Check className="h-3 w-3 ml-1 text-green-500" />
-                ) : (
-                  <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
-                )}
-              </Button>
-              <Button
-                variant={runner === "codex" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handleRunnerChange("codex")}
-                className="flex-1 relative"
-                disabled={!codexAvailable}
-              >
-                Codex
-                {codexAvailable ? (
-                  <Check className="h-3 w-3 ml-1 text-green-500" />
-                ) : (
-                  <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
-                )}
-              </Button>
-            </div>
-          </section>
-
-          {/* Claude Model */}
-          {runner === "claude" && claudeAvailable && claudeModels.length > 0 && (
-            <section>
-              <h3 className="text-sm font-medium text-text-primary mb-2">
-                Claude Model
-              </h3>
-              {useDropdownForClaude ? (
-                <select
-                  value={claudeModel}
-                  onChange={(e) => handleClaudeModelChange(e.target.value)}
-                  className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary focus:border-primary focus:outline-none"
-                >
-                  {claudeModels.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.displayName || m.slug}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex gap-2">
-                  {claudeModels.map((m) => (
-                    <Button
-                      key={m.slug}
-                      variant={claudeModel === m.slug ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleClaudeModelChange(m.slug)}
-                      className="flex-1 capitalize"
-                    >
-                      {formatModelName(m)}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* Codex Model */}
-          {runner === "codex" && codexAvailable && codexModels.length > 0 && (
-            <section>
-              <h3 className="text-sm font-medium text-text-primary mb-2">
-                Codex Model
-                {runners?.codex?.currentModel && (
-                  <span className="text-xs text-text-tertiary ml-2">
-                    (config: {runners.codex.currentModel})
-                  </span>
-                )}
-              </h3>
-              {useDropdownForCodex ? (
-                <select
-                  value={codexModel}
-                  onChange={(e) => handleCodexModelChange(e.target.value)}
-                  className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary focus:border-primary focus:outline-none"
-                >
-                  {codexModels.map((m) => (
-                    <option key={m.slug} value={m.slug}>
-                      {m.displayName || m.slug}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {codexModels.map((m) => (
-                    <Button
-                      key={m.slug}
-                      variant={codexModel === m.slug ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleCodexModelChange(m.slug)}
-                      className="flex-1 min-w-[70px]"
-                    >
-                      {formatModelName(m)}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* Thinking Level - only show if model supports it */}
-          {(runner === "claude" || runner === "codex") && availableThinkingLevels.length > 0 && (
-            <section>
-              <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
-                <Brain className="h-4 w-4 text-text-secondary" />
-                Thinking Level
-              </h3>
+            {/* PR Scope */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Users className="h-3.5 w-3.5 text-text-secondary" />
+                <span className="text-xs text-text-tertiary">PR Scope</span>
+              </div>
               <div className="flex gap-2">
-                {availableThinkingLevels.map((level) => (
-                  <Button
-                    key={level.effort}
-                    variant={thinkingLevel === level.effort ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => handleThinkingLevelChange(level.effort)}
-                    className="flex-1 capitalize"
-                    title={level.description}
-                  >
-                    {level.effort === "xhigh" ? "X-High" : level.effort}
-                  </Button>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Fix Options */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
-              <Wrench className="h-4 w-4 text-text-secondary" />
-              What to Fix
-            </h3>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
-                <div>
-                  <p className="text-sm text-text-primary">CI Failures</p>
-                  <p className="text-xs text-text-tertiary">Fix failing builds and tests</p>
-                </div>
                 <Button
-                  variant={fix.ci ? "default" : "outline"}
+                  variant={prScope === "involved" ? "default" : "outline"}
                   size="sm"
-                  onClick={() => handleFixToggle("ci")}
+                  onClick={() => handlePrScopeChange("involved")}
+                  className="flex-1"
                 >
-                  {fix.ci ? "On" : "Off"}
+                  My PRs
                 </Button>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
-                <div>
-                  <p className="text-sm text-text-primary">PR Comments</p>
-                  <p className="text-xs text-text-tertiary">Address reviewer feedback</p>
-                </div>
                 <Button
-                  variant={fix.comments ? "default" : "outline"}
+                  variant={prScope === "all" ? "default" : "outline"}
                   size="sm"
-                  onClick={() => handleFixToggle("comments")}
+                  onClick={() => handlePrScopeChange("all")}
+                  className="flex-1"
                 >
-                  {fix.comments ? "On" : "Off"}
-                </Button>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface-secondary border border-border">
-                <div>
-                  <p className="text-sm text-text-primary">Merge Conflicts</p>
-                  <p className="text-xs text-text-tertiary text-amber-500/80">⚠️ Experimental - use with caution</p>
-                </div>
-                <Button
-                  variant={fix.conflicts ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => handleFixToggle("conflicts")}
-                >
-                  {fix.conflicts ? "On" : "Off"}
+                  All PRs
                 </Button>
               </div>
             </div>
-          </section>
+          </Accordion>
 
-          {/* Ignored CI Checks */}
-          <section>
-            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
-              <EyeOff className="h-4 w-4 text-text-secondary" />
-              Ignored CI Checks
-            </h3>
-            <div className="space-y-2">
+          {/* AI Section */}
+          <Accordion
+            title="AI Configuration"
+            icon={<Cpu className="h-4 w-4 text-text-secondary" />}
+            isOpen={expandedSection === "ai"}
+            onToggle={() => toggleSection("ai")}
+          >
+            {/* Runner */}
+            <div>
+              <p className="text-xs text-text-tertiary mb-1.5">Runner</p>
+              <div className="flex gap-2">
+                <Button
+                  variant={runner === "auto" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleRunnerChange("auto")}
+                  className="flex-1"
+                >
+                  Auto
+                </Button>
+                <Button
+                  variant={runner === "claude" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleRunnerChange("claude")}
+                  className="flex-1"
+                  disabled={!claudeAvailable}
+                >
+                  Claude
+                  {claudeAvailable ? (
+                    <Check className="h-3 w-3 ml-1 text-green-500" />
+                  ) : (
+                    <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
+                  )}
+                </Button>
+                <Button
+                  variant={runner === "codex" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleRunnerChange("codex")}
+                  className="flex-1"
+                  disabled={!codexAvailable}
+                >
+                  Codex
+                  {codexAvailable ? (
+                    <Check className="h-3 w-3 ml-1 text-green-500" />
+                  ) : (
+                    <AlertCircle className="h-3 w-3 ml-1 text-text-tertiary" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Claude Model */}
+            {runner === "claude" && claudeAvailable && claudeModels.length > 0 && (
+              <div>
+                <p className="text-xs text-text-tertiary mb-1.5">Model</p>
+                {useDropdownForClaude ? (
+                  <select
+                    value={claudeModel}
+                    onChange={(e) => handleClaudeModelChange(e.target.value)}
+                    className="w-full rounded border border-border bg-surface-secondary px-3 py-1.5 text-sm text-text-primary focus:border-primary focus:outline-none"
+                  >
+                    {claudeModels.map((m) => (
+                      <option key={m.slug} value={m.slug}>
+                        {m.displayName || m.slug}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="flex gap-2">
+                    {claudeModels.map((m) => (
+                      <Button
+                        key={m.slug}
+                        variant={claudeModel === m.slug ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handleClaudeModelChange(m.slug)}
+                        className="flex-1 capitalize"
+                      >
+                        {formatModelName(m)}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Codex Model */}
+            {runner === "codex" && codexAvailable && codexModels.length > 0 && (
+              <div>
+                <p className="text-xs text-text-tertiary mb-1.5">
+                  Model
+                  {runners?.codex?.currentModel && (
+                    <span className="ml-1">(config: {runners.codex.currentModel})</span>
+                  )}
+                </p>
+                {useDropdownForCodex ? (
+                  <select
+                    value={codexModel}
+                    onChange={(e) => handleCodexModelChange(e.target.value)}
+                    className="w-full rounded border border-border bg-surface-secondary px-3 py-1.5 text-sm text-text-primary focus:border-primary focus:outline-none"
+                  >
+                    {codexModels.map((m) => (
+                      <option key={m.slug} value={m.slug}>
+                        {m.displayName || m.slug}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {codexModels.map((m) => (
+                      <Button
+                        key={m.slug}
+                        variant={codexModel === m.slug ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handleCodexModelChange(m.slug)}
+                        className="flex-1 min-w-[70px]"
+                      >
+                        {formatModelName(m)}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Thinking Level */}
+            {(runner === "claude" || runner === "codex") && availableThinkingLevels.length > 0 && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Brain className="h-3.5 w-3.5 text-text-secondary" />
+                  <span className="text-xs text-text-tertiary">Thinking Level</span>
+                </div>
+                <div className="flex gap-2">
+                  {availableThinkingLevels.map((level) => (
+                    <Button
+                      key={level.effort}
+                      variant={thinkingLevel === level.effort ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handleThinkingLevelChange(level.effort)}
+                      className="flex-1 capitalize"
+                      title={level.description}
+                    >
+                      {level.effort === "xhigh" ? "X-High" : level.effort}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Accordion>
+
+          {/* Monitor Section */}
+          <Accordion
+            title="Monitor Behavior"
+            icon={<Activity className="h-4 w-4 text-text-secondary" />}
+            isOpen={expandedSection === "monitor"}
+            onToggle={() => toggleSection("monitor")}
+          >
+            {/* Fix Options */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Wrench className="h-3.5 w-3.5 text-text-secondary" />
+                <span className="text-xs text-text-tertiary">What to Fix</span>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-sm text-text-primary">CI Failures</span>
+                  <Button
+                    variant={fix.ci ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handleFixToggle("ci")}
+                  >
+                    {fix.ci ? "On" : "Off"}
+                  </Button>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-sm text-text-primary">PR Comments</span>
+                  <Button
+                    variant={fix.comments ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handleFixToggle("comments")}
+                  >
+                    {fix.comments ? "On" : "Off"}
+                  </Button>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <span className="text-sm text-text-primary">Merge Conflicts</span>
+                    <span className="text-xs text-amber-500/80 ml-1.5">⚠️ Experimental</span>
+                  </div>
+                  <Button
+                    variant={fix.conflicts ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handleFixToggle("conflicts")}
+                  >
+                    {fix.conflicts ? "On" : "Off"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Ignored CI Checks */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <EyeOff className="h-3.5 w-3.5 text-text-secondary" />
+                <span className="text-xs text-text-tertiary">Ignored CI Checks</span>
+              </div>
               <textarea
                 value={ignoredChecks.join("\n")}
                 onChange={(e) => handleIgnoredChecksChange(e.target.value)}
-                placeholder="Enter check names to ignore (one per line)&#10;e.g., PR QA Plan Enforcer"
-                className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary focus:outline-none resize-none"
-                rows={3}
+                placeholder="Check names to ignore (one per line)"
+                className="w-full rounded border border-border bg-surface-secondary px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary focus:outline-none resize-none"
+                rows={2}
               />
-              <p className="text-xs text-text-tertiary">
-                CI checks matching these names will be ignored when determining build status
-              </p>
             </div>
-          </section>
 
-          {/* Push */}
-          <section>
-            <div className="flex items-center justify-between p-3 rounded-lg bg-surface-secondary border border-border">
-              <div>
-                <p className="text-sm text-text-primary">Push changes</p>
-                <p className="text-xs text-text-tertiary">
-                  Allow commits and pushes
-                </p>
-              </div>
+            {/* Push */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-text-primary">Push changes</span>
               <Button
                 variant={pushEnabled ? "default" : "outline"}
                 size="sm"
@@ -515,10 +547,12 @@ export function SettingsDialog({
                 {pushEnabled ? "On" : "Off"}
               </Button>
             </div>
-          </section>
+          </Accordion>
+        </div>
 
-          {/* Save */}
-          {isDirty && (
+        {/* Save Button - Fixed at bottom */}
+        {isDirty && (
+          <div className="pt-3 mt-3 border-t border-border">
             <Button
               size="sm"
               onClick={save}
@@ -527,8 +561,8 @@ export function SettingsDialog({
             >
               {saving ? "Saving..." : "Save"}
             </Button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
