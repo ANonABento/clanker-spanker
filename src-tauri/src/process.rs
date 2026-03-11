@@ -60,6 +60,7 @@ impl ProcessRegistry {
         fix: &FixSettings,
         runner: &str,
         model: &str,
+        ignored_checks: &[String],
     ) -> Result<u32, String> {
         // Convert FixSettings to comma-separated flags
         let mut fix_flags = Vec::new();
@@ -102,6 +103,9 @@ impl ProcessRegistry {
                 .map_err(|e| format!("Failed to set script permissions: {}", e))?;
         }
 
+        // Convert ignored_checks to pipe-separated string (comma already used for fix_flags)
+        let ignored_checks_str = ignored_checks.join("|");
+
         // Spawn the monitor script in its own process group
         // so we can kill the entire tree (bash + AI CLI + helpers) on stop
         let mut cmd = Command::new("bash");
@@ -114,6 +118,7 @@ impl ProcessRegistry {
             .arg(&fix_flags_str)
             .arg(runner)
             .arg(model)
+            .arg(&ignored_checks_str)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 

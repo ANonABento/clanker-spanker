@@ -129,7 +129,7 @@ pub fn start_monitor(
     interval_minutes: Option<i32>,
 ) -> Result<Monitor, String> {
     let id = Uuid::new_v4().to_string();
-    let (max_iter, interval, pending_wait_minutes, fix, runner, model) = {
+    let (max_iter, interval, pending_wait_minutes, fix, runner, model, ignored_checks) = {
         let conn = state
             .db
             .lock()
@@ -148,6 +148,7 @@ pub fn start_monitor(
             settings.fix,
             settings.runner,
             effective_model,
+            settings.ignored_checks,
         )
     };
     let now: DateTime<Utc> = Utc::now();
@@ -225,6 +226,7 @@ pub fn start_monitor(
         &fix,
         &runner,
         &model,
+        &ignored_checks,
     )?;
 
     // Update the PID in the database

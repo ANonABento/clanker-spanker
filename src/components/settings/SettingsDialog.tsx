@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench } from "lucide-react";
+import { X, Sun, Moon, Power, Check, AlertCircle, Brain, Wrench, EyeOff, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAutostart } from "@/hooks/useAutostart";
 import { getGlobalSettings, setGlobalSettings, detectRunners } from "@/lib/tauri";
@@ -27,6 +27,8 @@ export function SettingsDialog({
   const [codexModel, setCodexModel] = useState<string>("gpt-5.4");
   const [thinkingLevel, setThinkingLevel] = useState<string>("medium");
   const [fix, setFix] = useState<FixSettings>({ ci: true, comments: true, conflicts: false });
+  const [ignoredChecks, setIgnoredChecks] = useState<string[]>([]);
+  const [prScope, setPrScope] = useState<"all" | "involved">("all");
   const [pushEnabled, setPushEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -49,6 +51,8 @@ export function SettingsDialog({
         setCodexModel(settings.codexModel || "gpt-5.4");
         setThinkingLevel(settings.thinkingLevel || "medium");
         setFix(settings.fix || { ci: true, comments: true, conflicts: false });
+        setIgnoredChecks(settings.ignoredChecks || []);
+        setPrScope(settings.prScope || "all");
         setPushEnabled(settings.pushEnabled);
         setIsDirty(false);
       })
@@ -108,8 +112,20 @@ export function SettingsDialog({
     setIsDirty(true);
   };
 
+  const handleIgnoredChecksChange = (value: string) => {
+    // Split by newlines, filter empty lines
+    const checks = value.split("\n").map((s) => s.trim()).filter(Boolean);
+    setIgnoredChecks(checks);
+    setIsDirty(true);
+  };
+
   const handlePushChange = () => {
     setPushEnabled(!pushEnabled);
+    setIsDirty(true);
+  };
+
+  const handlePrScopeChange = (value: "all" | "involved") => {
+    setPrScope(value);
     setIsDirty(true);
   };
 
@@ -124,6 +140,8 @@ export function SettingsDialog({
         codexModel: codexModel as GlobalSettings["codexModel"],
         thinkingLevel,
         fix,
+        ignoredChecks,
+        prScope,
         pushEnabled,
       };
       await setGlobalSettings(updated);
@@ -234,6 +252,35 @@ export function SettingsDialog({
                 {isAutoStartEnabled ? "On" : "Off"}
               </Button>
             </div>
+          </section>
+
+          {/* PR Scope */}
+          <section>
+            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+              <Users className="h-4 w-4 text-text-secondary" />
+              PR Scope
+            </h3>
+            <div className="flex gap-2">
+              <Button
+                variant={prScope === "involved" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handlePrScopeChange("involved")}
+                className="flex-1"
+              >
+                My PRs
+              </Button>
+              <Button
+                variant={prScope === "all" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handlePrScopeChange("all")}
+                className="flex-1"
+              >
+                All PRs
+              </Button>
+            </div>
+            <p className="text-xs text-text-tertiary mt-1.5">
+              "My PRs" only fetches PRs you authored or are assigned to (saves RAM)
+            </p>
           </section>
 
           {/* Runner */}
@@ -428,6 +475,26 @@ export function SettingsDialog({
                   {fix.conflicts ? "On" : "Off"}
                 </Button>
               </div>
+            </div>
+          </section>
+
+          {/* Ignored CI Checks */}
+          <section>
+            <h3 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+              <EyeOff className="h-4 w-4 text-text-secondary" />
+              Ignored CI Checks
+            </h3>
+            <div className="space-y-2">
+              <textarea
+                value={ignoredChecks.join("\n")}
+                onChange={(e) => handleIgnoredChecksChange(e.target.value)}
+                placeholder="Enter check names to ignore (one per line)&#10;e.g., PR QA Plan Enforcer"
+                className="w-full rounded border border-border bg-surface-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary focus:outline-none resize-none"
+                rows={3}
+              />
+              <p className="text-xs text-text-tertiary">
+                CI checks matching these names will be ignored when determining build status
+              </p>
             </div>
           </section>
 

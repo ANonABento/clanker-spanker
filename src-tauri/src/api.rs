@@ -467,7 +467,7 @@ pub(crate) fn start_monitor_internal<R: Runtime>(
     use uuid::Uuid;
 
     let id = Uuid::new_v4().to_string();
-    let (max_iter, interval, pending_wait_minutes, fix, runner, model) = {
+    let (max_iter, interval, pending_wait_minutes, fix, runner, model, ignored_checks) = {
         let conn = state
             .db
             .lock()
@@ -486,6 +486,7 @@ pub(crate) fn start_monitor_internal<R: Runtime>(
             settings.fix,
             settings.runner,
             effective_model,
+            settings.ignored_checks,
         )
     };
     let now = Utc::now();
@@ -563,6 +564,7 @@ pub(crate) fn start_monitor_internal<R: Runtime>(
         &fix,
         &runner,
         &model,
+        &ignored_checks,
     )?;
 
     // Update the PID

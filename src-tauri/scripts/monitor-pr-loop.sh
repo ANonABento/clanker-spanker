@@ -19,14 +19,15 @@ DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL]}"
-REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL]}"
+PR_NUM="${1:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL] [IGNORED_CHECKS]}"
+REPO="${2:?Usage: $0 <PR_NUMBER> <REPO> [MAX_ITERATIONS] [INTERVAL_MINUTES] [PENDING_WAIT_MINUTES] [FIX_FLAGS] [RUNNER] [MODEL] [IGNORED_CHECKS]}"
 MAX_ITER="${3:-10}"
 INTERVAL="${4:-15}"
 PENDING_WAIT_MINUTES="${5:-15}"
 FIX_FLAGS="${6:-ci,comments}"
 RUNNER="${7:-auto}"
 MODEL="${8:-auto}"
+IGNORED_CHECKS="${9:-}"  # Pipe-separated list of check names to ignore (e.g., "PR QA Plan Enforcer|lint")
 
 # Parse comma-separated fix flags
 DO_CI=0
@@ -35,6 +36,25 @@ DO_CONFLICTS=0
 [[ "$FIX_FLAGS" == *"ci"* ]] && DO_CI=1
 [[ "$FIX_FLAGS" == *"comments"* ]] && DO_COMMENTS=1
 [[ "$FIX_FLAGS" == *"conflicts"* ]] && DO_CONFLICTS=1
+
+# Determine AI provider from runner
+if [ "$RUNNER" = "codex" ]; then
+  AI_PROVIDER="codex"
+elif [ "$RUNNER" = "claude" ]; then
+  AI_PROVIDER="claude"
+else
+  # Auto: prefer claude if available, else codex
+  if command -v claude &>/dev/null; then
+    AI_PROVIDER="claude"
+  elif command -v codex &>/dev/null; then
+    AI_PROVIDER="codex"
+  else
+    AI_PROVIDER="claude"  # fallback
+  fi
+fi
+
+# Retry interval on errors (in minutes)
+QUICK_RETRY_INTERVAL=2
 
 # Parse owner/repo
 OWNER="${REPO%%/*}"
@@ -1344,13 +1364,35 @@ run_one_time_history_clean_mode() {
 # Function to check CI status
 check_ci_status() {
   local result
-  # Use 'bucket' field which gh pre-categorizes as: pass, fail, pending, skipping, cancel
-  result=$(gh pr checks "$PR_NUM" --repo "$REPO" --json bucket 2>/dev/null | \
-    jq -r 'if length == 0 then "success"
-           elif any(.bucket == "fail") then "failure"
-           elif any(.bucket == "pending") then "pending"
-           else "success"
-           end' 2>/dev/null)
+  local checks_json
+  local ignored_pattern
+
+  # Convert pipe-separated IGNORED_CHECKS to regex pattern for jq
+  # e.g., "PR QA Plan|lint" -> "PR QA Plan|lint"
+  ignored_pattern="$IGNORED_CHECKS"
+
+  # Use 'name' and 'bucket' fields, filter out ignored checks
+  checks_json=$(gh pr checks "$PR_NUM" --repo "$REPO" --json name,bucket 2>/dev/null || echo "[]")
+
+  if [ -z "$ignored_pattern" ]; then
+    # No ignored checks - use original logic
+    result=$(echo "$checks_json" | jq -r '
+      if length == 0 then "success"
+      elif any(.bucket == "fail") then "failure"
+      elif any(.bucket == "pending") then "pending"
+      else "success"
+      end' 2>/dev/null)
+  else
+    # Filter out ignored checks, then evaluate remaining
+    result=$(echo "$checks_json" | jq -r --arg ignored "$ignored_pattern" '
+      # Filter out checks whose name contains any ignored pattern
+      [.[] | select(.name | test($ignored) | not)] |
+      if length == 0 then "success"
+      elif any(.bucket == "fail") then "failure"
+      elif any(.bucket == "pending") then "pending"
+      else "success"
+      end' 2>/dev/null)
+  fi
 
   # Default to success if empty (no CI configured or parsing failed)
   echo "${result:-success}"
@@ -1644,6 +1686,28 @@ Requirements:
   fi
 }
 
+# Function to handle PR comments
+run_handle_comments() {
+  echo -e "${CYAN}🔧 Running comment handling flow...${RESET}"
+
+  if [ "$AI_PROVIDER" = "codex" ]; then
+    run_codex_prompt "Handle unresolved PR comments for PR #$PR_NUM in $REPO.
+Review unresolved comments, apply requested changes, and mark threads as resolved where appropriate.
+
+Requirements:
+1) Keep all work inside this checkout at: $REPO_DIR
+2) If changes are required, commit them and ensure they are pushed to PR head branch: $EXPECTED_PR_HEAD_BRANCH.
+3) Do NOT leave tracked uncommitted changes.
+4) At the very end, print exactly one status line:
+   - @@RUN_RESULT:CHANGED@@
+   - @@RUN_RESULT:NO_CHANGES_NEEDED@@
+   - @@RUN_RESULT:BLOCKED:<reason>@@
+5) Use NO_CHANGES only when no commit is needed and nothing is blocked." "Comment handling" "true"
+  else
+    run_claude_prompt "/handle-pr-comments --pr $PR_NUM" "Comment handling"
+  fi
+}
+
 # Function to check for merge conflicts
 check_merge_conflicts() {
   local result
@@ -1889,13 +1953,15 @@ for iter in $(seq 1 $MAX_ITER); do
         post_comment_count=${post_comment_count:-0}
         post_comment_ids=$(get_unresolved_thread_ids)
         echo "@@COMMENTS_REMAINING:$post_comment_count@@"
+      fi
+    fi
 
     # Update state with current thread IDs
     update_state "$iter" "$current_ids"
-    else
-      echo -e "${GREEN}✅ No unresolved comments${RESET}"
-    fi
+  else
+    echo -e "${GREEN}✅ No unresolved comments${RESET}"
   fi
+  fi  # Close DO_COMMENTS block
 
   # ═══════════════════════════════════════════════════════════════
   # STEP 6: Sleep until next iteration

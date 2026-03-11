@@ -147,6 +147,7 @@ export interface GlobalSettings {
   codexModel: CodexModel;
   thinkingLevel: string;
   fix: FixSettings;
+  ignoredChecks: string[];
   autoStartDraftToOpen: boolean;
   prScope: "all" | "involved";
   schedule: ScheduleSettings;

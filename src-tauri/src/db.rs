@@ -219,7 +219,26 @@ pub fn init_schema(conn: &Connection) -> SqliteResult<()> {
 }
 
 /// Clean up old completed/failed monitor records (keep last 50)
+/// Also deletes associated log files from disk
 pub fn cleanup_old_monitors(conn: &Connection) -> SqliteResult<usize> {
+    // First, get log files for monitors we're about to delete
+    let mut stmt = conn.prepare(
+        "SELECT log_file FROM monitors WHERE id NOT IN (
+            SELECT id FROM monitors ORDER BY created_at DESC LIMIT 50
+        ) AND status IN ('completed', 'failed', 'stopped')"
+    )?;
+
+    let log_files: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Delete the log files from disk
+    for log_file in log_files {
+        let _ = std::fs::remove_file(&log_file);
+    }
+
+    // Now delete the monitor records
     conn.execute(
         "DELETE FROM monitors WHERE id NOT IN (
             SELECT id FROM monitors ORDER BY created_at DESC LIMIT 50
